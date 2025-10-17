@@ -22,6 +22,14 @@ jobs:
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      
+      - name: Copy seed JSON into frontend/data
+        run: |
+          mkdir -p frontend/data
+          cp -v seed/*.json frontend/data/
+
 
       # 정적 사이트 그대로 올림 (frontend 폴더 전체)
       - name: Upload artifact
