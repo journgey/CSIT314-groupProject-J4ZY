@@ -16,15 +16,14 @@ concurrency:
 
 jobs:
   deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      # 정적 사이트라 빌드 불필요 → frontend 폴더 그대로 업로드
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      # 정적 사이트 그대로 올림 (frontend 폴더 전체)
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:

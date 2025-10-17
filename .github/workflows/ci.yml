@@ -1,5 +1,4 @@
 name: CI
-
 on:
   push:
     branches: [ main ]
@@ -9,40 +8,41 @@ jobs:
   backend-ci:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Install backend deps
+      - name: Install deps
         run: |
           python -m pip install --upgrade pip
           pip install -r backend/requirements.txt
 
-      - name: Create DB schema (init_db)
+      - name: Init DB schema
+        env:
+          PYTHONPATH: .
         run: |
           python - <<'PY'
           from backend.repository.db import init_db
           init_db()
-          print("DB schema created.")
+          print("DB schema created")
           PY
 
-      - name: Import CSV into SQLite
-        # CSV가 seed/ 폴더에 있고 import_from_csv.py를 만들어 두셨다는 전제
+      - name: Import CSV -> SQLite
         run: |
+          # seed/import_from_csv.py 내부에서 DB 경로가 ../backend/surething.db 라면 그대로 동작합니다.
           python seed/import_from_csv.py
 
-      - name: Backend smoke test (Flask test client)
+      - name: Backend smoke test
+        env:
+          PYTHONPATH: .
         run: |
           python - <<'PY'
           from backend.app import create_app
           app = create_app()
           with app.test_client() as c:
-              for path in ["/api/accounts/", "/api/categories/", "/api/requests/"]:
-                  rv = c.get(path)
-                  assert rv.status_code == 200, f"{path} -> {rv.status_code}"
-          print("✅ Smoke test passed.")
+              for p in ("/api/accounts/", "/api/categories/", "/api/requests/"):
+                  r = c.get(p); assert r.status_code == 200, (p, r.status_code, r.data[:200])
+          print("✅ Smoke test passed")
           PY
