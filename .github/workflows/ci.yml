@@ -29,10 +29,9 @@ jobs:
           print("DB schema created")
           PY
 
-      - name: Import CSV -> SQLite
+      - name: Import JSON into SQLite
         run: |
-          # seed/import_from_csv.py 내부에서 DB 경로가 ../backend/surething.db 라면 그대로 동작합니다.
-          python seed/import_from_csv.py
+          python seed/import_from_json.py
 
       - name: Backend smoke test
         env:
