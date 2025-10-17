@@ -1,0 +1,10 @@
+# Python / venv
+.venv/
+__pycache__/
+*.pyc
+
+# SQLite
+backend/surething.db
+
+# Misc
+.env

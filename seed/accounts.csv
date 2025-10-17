@@ -1,0 +1,4 @@
+id,email,name,role,is_active
+1,pin1@demo.com,PIN One,PIN,1
+2,csr1@demo.com,CSR One,CSR,1
+3,admin1@demo.com,Admin One,ADMIN,1
