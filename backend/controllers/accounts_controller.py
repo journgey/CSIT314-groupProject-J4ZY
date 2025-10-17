@@ -1,5 +1,5 @@
 from flask import Blueprint, jsonify
-from repository.db import get_conn
+from backend.repository.db import get_conn
 
 accounts_bp = Blueprint("accounts", __name__)
 

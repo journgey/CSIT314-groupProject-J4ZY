@@ -1,5 +1,5 @@
 from flask import Blueprint, jsonify, request
-from services.requests_service import (
+from backend.services.requests_service import (
     list_requests, get_request, create_request, update_request, delete_request
 )
 

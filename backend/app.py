@@ -1,9 +1,9 @@
 from flask import Flask
 from flask_cors import CORS
-from repository.db import init_db
-from controllers.requests_controller import requests_bp
-from controllers.accounts_controller import accounts_bp   # NEW
-from controllers.categories_controller import categories_bp  # NEW
+from backend.repository.db import init_db
+from backend.controllers.requests_controller import requests_bp
+from backend.controllers.accounts_controller import accounts_bp
+from backend.controllers.categories_controller import categories_bp
 
 def create_app():
     app = Flask(__name__)
