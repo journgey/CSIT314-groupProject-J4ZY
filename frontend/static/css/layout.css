@@ -1,0 +1,93 @@
+/* Layout: containers, pages, toolbars, etc. */
+.container {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 0 var(--space-4);
+}
+
+.page {
+  display: grid;
+  gap: var(--space-6);
+  padding: var(--space-6) 0;
+}
+
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+.page-title {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 800;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.content {
+  display: grid;
+  gap: var(--space-4);
+}
+
+/* Grid helpers (2 or 3 columns) */
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4); }
+.grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: var(--space-4); }
+@media (max-width: 1024px) { .grid-3 { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 720px)  { .grid-2, .grid-3 { grid-template-columns: 1fr; } }
+
+/* Navbar */
+.navbar {
+  position: sticky; top: 0; z-index: 10;
+  backdrop-filter: saturate(180%) blur(8px);
+  background: color-mix(in oklab, var(--color-bg) 75%, transparent);
+  border-bottom: 1px solid var(--color-border);
+}
+.navbar-inner {
+  display: flex; align-items: center; gap: var(--space-4);
+  height: 56px;
+}
+.navbar a {
+  padding: 8px 10px; border-radius: var(--radius-sm);
+}
+.navbar a[aria-current="page"] {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+}
+
+/* Footer */
+.footer {
+  margin-top: var(--space-8);
+  padding: var(--space-6) 0;
+  border-top: 1px solid var(--color-border);
+  color: var(--color-muted);
+  font-size: 14px;
+}
+
+/* Modal (basic structure) */
+.modal-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.35);
+  display: none;
+}
+.modal {
+  position: fixed; inset: 0;
+  display: none; place-items: center;
+  padding: var(--space-6);
+}
+.modal.open, .modal-backdrop.open { display: grid; }
+.modal-dialog {
+  width: min(560px, 96vw);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  padding: var(--space-4);
+  display: grid; gap: var(--space-4);
+}
+.modal-actions { display: flex; gap: var(--space-3); justify-content: flex-end; }

@@ -1,0 +1,56 @@
+/* Design tokens: colors, spacing, radius, shadows, etc. */
+:root {
+  /* Color palette */
+  --color-bg: #ffffff;
+  --color-surface: #f7f7fa;
+  --color-text: #1f2937;
+  --color-muted: #6b7280;
+
+  --color-primary: #3b82f6;      /* blue */
+  --color-primary-600: #2563eb;
+  --color-danger: #ef4444;       /* red */
+  --color-danger-600: #dc2626;
+  --color-border: #e5e7eb;
+  --color-focus: #22c55e;        /* green focus ring */
+
+  /* Typography / spacing / border radius / shadow */
+  --font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Noto Sans, Apple Color Emoji, Noto Color Emoji, sans-serif;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+
+  --shadow-sm: 0 1px 2px rgba(0,0,0,.06);
+  --shadow-md: 0 6px 18px rgba(0,0,0,.08);
+
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  --transition-fast: 150ms;
+}
+
+/* Dark mode defaults */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-bg: #0b1020;
+    --color-surface: #11162a;
+    --color-text: #e5e7eb;
+    --color-muted: #9ca3af;
+    --color-border: #2a3350;
+
+    --shadow-sm: 0 1px 2px rgba(0,0,0,.35);
+    --shadow-md: 0 6px 18px rgba(0,0,0,.35);
+  }
+}
+
+/* Standardized focus ring */
+:where(a, button, input, select, textarea) {
+  outline: none;
+}
+:where(a, button, input, select, textarea):focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-focus) 35%, transparent);
+  border-color: var(--color-focus);
+  transition: box-shadow var(--transition-fast);
+}

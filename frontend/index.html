@@ -1,6 +1,29 @@
 <!-- frontend/index.html -->
-<!doctype html>
-<meta charset="utf-8">
-<title>Sure Thing</title>
-<meta http-equiv="refresh" content="0; url=./requests.html">
-<p>If you are not redirected, <a href="./requests.html">click here</a>.</p>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Sure Thing</title>
+
+  <!-- Project styles -->
+  <link rel="stylesheet" href="static/css/theme.css" />
+  <link rel="stylesheet" href="static/css/base.css" />
+  <link rel="stylesheet" href="static/css/layout.css" />
+
+  <!-- Auto-redirect to main page -->
+  <meta http-equiv="refresh" content="1; url=./requests.html" />
+</head>
+<body>
+  <main class="container page" style="text-align:center; margin-top: 20vh;">
+    <!-- Logo or title -->
+    <h1 class="page-title">Sure Thing Volunteer Platform</h1>
+
+    <!-- Redirect message -->
+    <p class="muted mt-4">Redirecting to the Requests page...</p>
+    <p class="mt-2">
+      If you are not redirected automatically,
+      <a href="./requests.html" class="btn btn-primary">Go to Requests</a>
+    </p>
+  </main>
+</body>
+</html>
