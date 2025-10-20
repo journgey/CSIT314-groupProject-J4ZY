@@ -1,11 +1,18 @@
-from flask import Blueprint, jsonify
-from backend.repository.db import get_conn
+class CategoryController:
+    def __init__(self, service):
+        pass
 
-categories_bp = Blueprint("categories", __name__)
+    def create(self, payload: dict):
+        pass
 
-@categories_bp.route("/", methods=["GET"])
-def list_categories_http():
-    conn = get_conn()
-    rows = conn.execute("SELECT id, name, description FROM categories ORDER BY id").fetchall()
-    conn.close()
-    return jsonify([dict(r) for r in rows])
+    def retrieve(self, category_id):
+        pass
+
+    def list(self, query: dict | None = None):
+        pass
+
+    def update(self, category_id, payload: dict):
+        pass
+
+    def delete(self, category_id):
+        pass

@@ -1,11 +1,18 @@
-from flask import Blueprint, jsonify
-from backend.repository.db import get_conn
+class AccountController:
+    def __init__(self, service):
+        pass
 
-accounts_bp = Blueprint("accounts", __name__)
+    def create(self, payload: dict):
+        pass
 
-@accounts_bp.route("/", methods=["GET"])
-def list_accounts_http():
-    conn = get_conn()
-    rows = conn.execute("SELECT id, email, name, role FROM accounts ORDER BY id").fetchall()
-    conn.close()
-    return jsonify([dict(r) for r in rows])
+    def retrieve(self, account_id):
+        pass
+
+    def list(self, query: dict | None = None):
+        pass
+
+    def update(self, account_id, payload: dict):
+        pass
+
+    def delete(self, account_id):
+        pass

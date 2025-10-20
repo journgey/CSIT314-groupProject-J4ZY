@@ -1,0 +1,42 @@
+[
+  {
+    "id": 1,
+    "name": "Transportation",
+    "description": "Provide transport or driving assistance, such as taking beneficiaries to hospitals, clinics, or community centers."
+  },
+  {
+    "id": 2,
+    "name": "Companionship",
+    "description": "Offer emotional support and social interaction through friendly visits, conversations, or recreational activities."
+  },
+  {
+    "id": 3,
+    "name": "Item Delivery",
+    "description": "Assist in delivering or lending welfare items such as wheelchairs, walking aids, or household necessities to beneficiaries."
+  },
+  {
+    "id": 4,
+    "name": "Tutoring",
+    "description": "Provide educational or tutoring support in subjects like language, math, or computer skills."
+  },
+  {
+    "id": 5,
+    "name": "Home Assistance",
+    "description": "Help with simple household chores, cleaning, or home organization for those with mobility or health difficulties."
+  },
+  {
+    "id": 6,
+    "name": "Digital Support",
+    "description": "Guide beneficiaries in using smartphones, online forms, or communication tools for digital literacy improvement."
+  },
+  {
+    "id": 7,
+    "name": "Health Escort",
+    "description": "Accompany elderly or disabled beneficiaries to medical appointments and provide basic assistance during visits."
+  },
+  {
+    "id": 8,
+    "name": "Community Events",
+    "description": "Assist in organizing or supporting community events, charity drives, or public outreach programs."
+  }
+]

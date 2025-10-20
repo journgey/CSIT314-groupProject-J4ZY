@@ -1,5 +1,5 @@
 [
-  {"id": 1, "email": "pin1@demo.com", "name": "PIN One", "role": "PIN", "is_active": 1},
-  {"id": 2, "email": "csr1@demo.com", "name": "CSR One", "role": "CSR", "is_active": 1},
-  {"id": 3, "email": "admin1@demo.com", "name": "Admin One", "role": "ADMIN", "is_active": 1}
+  {"id": 1, "email": "pin1@demo.com", "name": "PIN One", "phone": "65432109", "role": "PIN", "status": 1},
+  {"id": 2, "email": "csr1@demo.com", "name": "CSR One", "phone": "65432109", "role": "CSR", "status": 1},
+  {"id": 3, "email": "admin1@demo.com", "name": "Admin One", "phone": "65432109", "role": "ADMIN", "status": 1}
 ]

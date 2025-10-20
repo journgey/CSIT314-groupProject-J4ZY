@@ -1,0 +1,77 @@
+{
+  "_comment": "Data source: https://eservice.ura.gov.sg/maps/",
+  "regions": [
+    {
+      "id": 1,
+      "name": "Central Region",
+      "districts": [
+        { "id": 101, "name": "Bishan" },
+        { "id": 102, "name": "Bukit Merah" },
+        { "id": 103, "name": "Bukit Timah" },
+        { "id": 104, "name": "Central Area" },
+        { "id": 105, "name": "Geylang" },
+        { "id": 106, "name": "Kallang" },
+        { "id": 107, "name": "Marine Parade" },
+        { "id": 108, "name": "Novena" },
+        { "id": 109, "name": "Queenstown" },
+        { "id": 110, "name": "Tanglin" },
+        { "id": 111, "name": "Toa Payoh" }
+      ]
+    },
+    {
+      "id": 2,
+      "name": "East Region",
+      "districts": [
+        { "id": 201, "name": "Bedok" },
+        { "id": 202, "name": "Changi" },
+        { "id": 203, "name": "Pasir Ris" },
+        { "id": 204, "name": "Paya Lebar" },
+        { "id": 205, "name": "Tampines" }
+      ]
+    },
+    {
+      "id": 3,
+      "name": "North Region",
+      "districts": [
+        { "id": 301, "name": "Central Water Catchment" },
+        { "id": 302, "name": "Lim Chu Kang" },
+        { "id": 303, "name": "Mandai" },
+        { "id": 304, "name": "Sembawang" },
+        { "id": 305, "name": "Simpang" },
+        { "id": 306, "name": "Sungei Kadut" },
+        { "id": 307, "name": "Woodlands" },
+        { "id": 308, "name": "Yishun" }
+      ]
+    },
+    {
+      "id": 4,
+      "name": "North-East Region",
+      "districts": [
+        { "id": 401, "name": "Ang Mo Kio" },
+        { "id": 402, "name": "Hougang" },
+        { "id": 403, "name": "Punggol" },
+        { "id": 404, "name": "Seletar" },
+        { "id": 405, "name": "Sengkang" },
+        { "id": 406, "name": "Serangoon" }
+      ]
+    },
+    {
+      "id": 5,
+      "name": "West Region",
+      "districts": [
+        { "id": 501, "name": "Boon Lay" },
+        { "id": 502, "name": "Bukit Batok" },
+        { "id": 503, "name": "Bukit Panjang" },
+        { "id": 504, "name": "Choa Chu Kang" },
+        { "id": 505, "name": "Clementi" },
+        { "id": 506, "name": "Jurong East" },
+        { "id": 507, "name": "Jurong West" },
+        { "id": 508, "name": "Pioneer" },
+        { "id": 509, "name": "Tengah" },
+        { "id": 510, "name": "Tuas" },
+        { "id": 511, "name": "Western Islands" },
+        { "id": 512, "name": "Western Water Catchment" }
+      ]
+    }
+  ]
+}
