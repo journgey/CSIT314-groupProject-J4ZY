@@ -1,6 +1,6 @@
 from typing import Dict, Any, Optional, List
 from werkzeug.security import generate_password_hash
-from schemas.accounts import Account
+from backend.schemas.accounts import Account
 
 class AccountService:
     """Business logic for accounts."""

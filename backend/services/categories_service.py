@@ -1,5 +1,5 @@
 from typing import Dict, Any, Optional, List
-from schemas.categories import Category 
+from backend.schemas.categories import Category 
 
 class CategoriesService:
     """Business logic for categories."""

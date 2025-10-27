@@ -1,7 +1,7 @@
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 import json
-from schemas.requests import Request  # Pydantic schema with business validators
+from backend.schemas.requests import Request  # Pydantic schema with business validators
 
 class RequestsService:
     """Business logic for requests."""
