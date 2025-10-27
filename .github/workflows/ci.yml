@@ -20,18 +20,49 @@ jobs:
           pip install -r backend/requirements.txt
 
       - name: Init DB schema
-        env:
-          PYTHONPATH: .
         run: |
           python - <<'PY'
-          from backend.repositories.db import init_db
-          init_db()
-          print("DB schema created")
+          from pathlib import Path
+          import sqlite3
+
+          BACKEND = Path("backend").resolve()
+          DB = BACKEND / "surething.db"
+          SQL = BACKEND / "db.sql"
+
+          conn = sqlite3.connect(DB)
+          conn.row_factory = sqlite3.Row
+          conn.executescript(SQL.read_text(encoding="utf-8"))
+          conn.commit()
+          conn.close()
+          print("DB schema created at", DB)
           PY
+
 
       - name: Import JSON into SQLite
         run: |
-          python seed/import_from_json.py
+          python - <<'PY'
+          from pathlib import Path
+          import sqlite3
+          import sys
+
+          ROOT = Path(".").resolve()
+          BACKEND = ROOT / "backend"
+          SEED = ROOT / "seed"
+
+          # add repo root to sys.path so `seed` can be imported
+          sys.path.insert(0, str(ROOT))
+
+          from seed import import_from_json as seeder
+
+          conn = sqlite3.connect(str(BACKEND / "surething.db"))
+          conn.row_factory = sqlite3.Row
+          conn.execute("PRAGMA foreign_keys = ON;")
+
+          seeder.run_with_existing_conn(conn, SEED)
+          conn.close()
+          print("JSON seeding completed.")
+          PY
+
 
       - name: Backend smoke test
         env:
