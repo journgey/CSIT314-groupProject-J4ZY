@@ -24,7 +24,7 @@ jobs:
           PYTHONPATH: .
         run: |
           python - <<'PY'
-          from backend.repository.db import init_db
+          from backend.repositories.db import init_db
           init_db()
           print("DB schema created")
           PY
