@@ -76,9 +76,9 @@ def create_app():
     app.teardown_appcontext(close_db)
 
     # Register blueprints (blueprints must not set their own url_prefix)
-    from controllers.accounts_controller import accounts_bp
-    from controllers.categories_controller import categories_bp
-    from controllers.requests_controller import requests_bp
+    from backend.controllers.accounts_controller import accounts_bp
+    from backend.controllers.categories_controller import categories_bp
+    from backend.controllers.requests_controller import requests_bp
     app.register_blueprint(accounts_bp, url_prefix="/api/accounts")
     app.register_blueprint(categories_bp, url_prefix="/api/categories")
     app.register_blueprint(requests_bp, url_prefix="/api/requests")

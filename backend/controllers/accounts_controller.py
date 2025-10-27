@@ -1,7 +1,7 @@
 from flask import Blueprint, request, jsonify
-from services.accounts_service import AccountService
-from repositories.accounts_repository import AccountsRepository
-from db_session import get_db
+from backend.services.accounts_service import AccountService
+from backend.repositories.accounts_repository import AccountsRepository
+from backend.db_session import get_db
 
 # Blueprint for accounts endpoints
 accounts_bp = Blueprint("accounts", __name__)

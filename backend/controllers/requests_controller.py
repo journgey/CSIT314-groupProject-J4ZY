@@ -1,7 +1,7 @@
 from flask import Blueprint, request, jsonify
-from repositories.requests_repository import RequestsRepository
-from services.requests_service import RequestsService
-from db_session import get_db
+from backend.services.requests_service import RequestsService
+from backend.repositories.requests_repository import RequestsRepository
+from backend.db_session import get_db
 
 requests_bp = Blueprint("requests", __name__)
 

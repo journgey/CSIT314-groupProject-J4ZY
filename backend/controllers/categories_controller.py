@@ -1,7 +1,7 @@
 from flask import Blueprint, request, jsonify
-from repositories.categories_repository import CategoriesRepository
-from services.categories_service import CategoriesService
-from db_session import get_db
+from backend.services.categories_service import CategoriesService
+from backend.repositories.categories_repository import CategoriesRepository
+from backend.db_session import get_db
 
 categories_bp = Blueprint("categories", __name__)
 
