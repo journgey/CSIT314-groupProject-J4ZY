@@ -24,7 +24,7 @@ if SEED_DIR.exists() and str(SEED_DIR) not in sys.path:
     sys.path.insert(0, str(SEED_DIR))
 
 from seed import import_from_json as seeder  # after sys.path wiring
-from db_session import close_db
+from backend.db_session import close_db
 
 # -----------------------------
 # One-shot helpers (schema & seed)

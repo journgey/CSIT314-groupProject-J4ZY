@@ -65,14 +65,19 @@ jobs:
 
 
       - name: Backend smoke test
-        env:
-          PYTHONPATH: .
         run: |
           python - <<'PY'
+          import runpy
+          # Run backend.app as a module so imports resolve correctly
+          runpy.run_module("backend.app", run_name="__main__")
+          print("✅ App module import OK")
+
           from backend.app import create_app
           app = create_app()
           with app.test_client() as c:
               for p in ("/api/accounts/", "/api/categories/", "/api/requests/"):
-                  r = c.get(p); assert r.status_code == 200, (p, r.status_code, r.data[:200])
+                  r = c.get(p)
+                  assert r.status_code == 200, (p, r.status_code, r.data[:200])
           print("✅ Smoke test passed")
           PY
+
