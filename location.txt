@@ -4,3 +4,5 @@ id,region_name,districts
 3,North,"Woodlands, Yishun, Sembawang, Admiralty, Khatib"
 4,North-East,"Hougang, Punggol, Sengkang, Serangoon, Buangkok"
 5,West,"Jurong East, Jurong West, Clementi, Bukit Batok, Choa Chu Kang, Boon Lay"
+
+Data source: https://eservice.ura.gov.sg/maps/

@@ -1,0 +1,7 @@
+[
+  { "id": 1, "name": "Central Region" },
+  { "id": 2, "name": "East Region" },
+  { "id": 3, "name": "North Region" },
+  { "id": 4, "name": "North-East Region" },
+  { "id": 5, "name": "West Region" }
+]

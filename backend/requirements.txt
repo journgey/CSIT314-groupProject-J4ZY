@@ -1,2 +1,10 @@
 flask
 flask-cors
+pydantic[email]
+werkzeug
+simplejson
+typing-extensions
+python-dotenv
+black
+flake8
+mypy
