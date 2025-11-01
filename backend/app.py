@@ -79,6 +79,8 @@ def create_app():
     from backend.controllers.accounts_controller import accounts_bp
     from backend.controllers.categories_controller import categories_bp
     from backend.controllers.requests_controller import requests_bp
+    from backend.controllers.requests_search_controller import requests_search_bp
+    app.register_blueprint(requests_search_bp, url_prefix="/api/requests")
     app.register_blueprint(accounts_bp, url_prefix="/api/accounts")
     app.register_blueprint(categories_bp, url_prefix="/api/categories")
     app.register_blueprint(requests_bp, url_prefix="/api/requests")
