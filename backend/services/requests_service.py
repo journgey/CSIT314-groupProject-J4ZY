@@ -1,91 +1,110 @@
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 import json
-from backend.schemas.requests import Request  # Pydantic schema with business validators
+
+from backend.db_session import get_db
+from backend.repositories.geo_repository import GeoRepository
+from backend.services.address_service import AddressService
 
 class RequestsService:
-    """Business logic for requests."""
+    """
+    Business rules:
+    - PIN: create; update/delete only own requests
+    - PlatformManager: delete any request
+    - CSR: read only (accept is handled in matching module)
+    - Status is computed in DB (v_requests_status), never stored.
+    """
 
-    def __init__(self, repository): 
+    def __init__(self, repository):
         self.repository = repository
 
-
+    # -------------- utils --------------
     @staticmethod
     def _serialize_volunteers(vols):
-        """Ensure volunteers are a list[int] for persistence (repo may store JSON)."""
         if vols is None:
             return []
         if isinstance(vols, list):
             return vols
-        # Accept comma-separated strings as a fallback
         if isinstance(vols, str) and vols.strip():
             return [int(x) for x in vols.split(",") if x.strip().isdigit()]
         return []
 
-
-    def create_request(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Validate and create a request, returning the created row."""
-        # Normalize volunteers before schema validation
-        data = dict(payload)
-        data["volunteers"] = self._serialize_volunteers(payload.get("volunteers"))
-
-        # Validate against Pydantic schema (status/CSR/volunteers constraints, dates, etc.)
-        req = Request(**data)
-
-        created = self.repository.create_request(
-            pin_id=req.pin_id,
-            csr_id=req.csr_id,
-            category_id=req.category_id,
-            district_id=req.district_id,
-            title=req.title,
-            description=req.description,
-            status=req.status.value if hasattr(req.status, "value") else req.status,  # enum-safe
-            start_at=req.start_at,
-            end_at=req.end_at,
-            created_at=req.created_at or datetime.utcnow(),
-            volunteers=json.dumps(req.volunteers or []),  # store as JSON text
-        )
-
-        # Return fresh row for consistent shape
-        fresh = self.repository.get_request_by_id(created["id"])
-        return fresh or created
-
+    # -------------- read --------------
     def get_request_by_id(self, req_id: int) -> Optional[Dict[str, Any]]:
-        row = self.repository.get_request_by_id(req_id)
-        return row
+        item = self.repository.get_request_by_id(req_id)
+        if item:
+            self.repository.increment_view_count(req_id)
+        return self.repository.get_request_by_id(req_id)
 
     def list_requests(self, filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
-        rows = self.repository.list_requests(filters or {})
-        return rows
+        return self.repository.list_requests(filters or {})
 
-    def update_request(self, req_id: int, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    # -------------- create (PIN only) --------------
+    def create_request(self, payload: Dict[str, Any], *, acting_user_id: int, acting_role: str) -> Dict[str, Any]:
+        if acting_role != "PIN":
+            raise PermissionError("Only PIN can create requests")
+
+        # Address enrichment (district/region inference etc.)
+        payload = AddressService(GeoRepository(get_db())).enrich_request_payload(payload)
+
+        data = dict(payload)
+        # Force ownership to current PIN
+        provided_pin_id = data.get("pin_id")
+        if provided_pin_id is None:
+            data["pin_id"] = acting_user_id
+        elif provided_pin_id != acting_user_id:
+            raise PermissionError("PIN can only create requests for themselves")
+
+        # Normalize volunteers to JSON text
+        data["volunteers"] = json.dumps(self._serialize_volunteers(payload.get("volunteers")))
+
+        created = self.repository.create_request(
+            pin_id=data["pin_id"],
+            csr_id=data.get("csr_id"),               # usually None at creation
+            category_id=data["category_id"],
+            district_id=data["district_id"],
+            title=data["title"],
+            description=data.get("description"),
+            start_at=data.get("start_at"),
+            end_at=data.get("end_at"),
+            volunteers=data.get("volunteers"),
+        )
+        return created
+
+    # -------------- update (PIN owner only) --------------
+    def update_request(self, req_id: int, payload: Dict[str, Any], *, acting_user_id: int, acting_role: str) -> Optional[Dict[str, Any]]:
+        if acting_role != "PIN":
+            raise PermissionError("Only PIN can update requests")
+
         current = self.repository.get_request_by_id(req_id)
         if not current:
             return None
+        if current.get("pin_id") != acting_user_id:
+            raise PermissionError("Forbidden: you can update only your own request")
+
+        # Prevent changing ownership/matching fields here
+        for forbidden in ("pin_id", "csr_id"):
+            if forbidden in payload:
+                raise ValueError(f"Field '{forbidden}' cannot be modified")
 
         data = dict(payload)
         if "volunteers" in data:
-            data["volunteers"] = self._serialize_volunteers(data.get("volunteers"))
+            data["volunteers"] = json.dumps(self._serialize_volunteers(data.get("volunteers")))
 
-        # Merge → re-validate to enforce invariants from schema
-        merged = {**current, **data}
-        # Convert volunteers TEXT->list if repository returned JSON string
-        if isinstance(merged.get("volunteers"), str):
-            try:
-                merged["volunteers"] = json.loads(merged["volunteers"])
-            except Exception:
-                merged["volunteers"] = []
-        Request(**merged)  # validation only
+        return self.repository.update_request(req_id, **data)
 
-        # Persist
-        self.repository.update_request(req_id, **data)
-
-        # Return updated row
-        return self.repository.get_request_by_id(req_id)
-
-    def delete_request(self, req_id: int) -> bool:
-        try:
-            self.repository.delete_request(req_id)
-            return True
-        except ValueError:
+    # -------------- delete (PIN owner OR PlatformManager) --------------
+    def delete_request(self, req_id: int, *, acting_user_id: int, acting_role: str) -> bool:
+        current = self.repository.get_request_by_id(req_id)
+        if not current:
             return False
+
+        if acting_role == "PlatformManager":
+            return self.repository.delete_request(req_id)
+
+        if acting_role == "PIN":
+            if current.get("pin_id") != acting_user_id:
+                raise PermissionError("Forbidden: you can delete only your own request")
+            return self.repository.delete_request(req_id)
+
+        raise PermissionError("Forbidden: only owner PIN or PlatformManager can delete requests")

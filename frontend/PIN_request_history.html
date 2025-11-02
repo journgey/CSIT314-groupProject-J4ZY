@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Request History</title>
+  <link rel="stylesheet" href="static/css/theme.css">
+  <link rel="stylesheet" href="static/css/base.css">
+  <link rel="stylesheet" href="static/css/layout.css">
+</head>
+<body>
+  <div class="page container">
+    <div class="page-header">
+      <h2 class="page-title">Completed Requests</h2>
+      <div class="toolbar">
+        <button class="btn btn-outline" onclick="window.location.href='PIN_landing_page.html'">Back to Dashboard</button>
+      </div>
+    </div>
+
+    <section class="content card">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Title</th>
+            <th>Category</th>
+            <th>Date</th>
+          </tr>
+        </thead>
+        <tbody id="historyTable"></tbody>
+      </table>
+    </section>
+  </div>
+
+  <script src="mock_requests.js"></script>
+  <script>
+    const mockRequests = window.mockRequests;
+    const completed = mockRequests.filter(r => r.status === "completed");
+
+    const table = document.getElementById("historyTable");
+    completed.forEach(r => {
+      const row = `
+        <tr>
+          <td>${r.id}</td>
+          <td><a href="PIN_view_request.html?id=${r.id}">${r.title}</a></td>
+          <td>${r.category}</td>
+          <td>${r.date}</td>
+        </tr>`;
+      table.insertAdjacentHTML("beforeend", row);
+    });
+  </script>
+</body>
+</html>

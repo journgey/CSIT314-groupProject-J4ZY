@@ -200,7 +200,8 @@ def import_requests(conn: sqlite3.Connection, path: Path) -> int:
     payload_no_created = []
 
     for r in rows:
-        volunteers_json = normalize_volunteers(r.get("volunteers"))
+        volunteers_json = normalize_volunteers(r.get("volunteers"))  # JSON text로 변환한다고 가정
+
         base = (
             r.get("id"),
             r["pin_id"],
@@ -209,32 +210,41 @@ def import_requests(conn: sqlite3.Connection, path: Path) -> int:
             r["district_id"],
             r["title"],
             r.get("description"),
-            r["status"],
             r.get("start_at"),
             r.get("end_at"),
-            volunteers_json
+            volunteers_json,
+            r.get("feedback_rating"),
+            r.get("feedback_comment"),
+            r.get("feedback_created_at"),
         )
+        
         if r.get("created_at") is not None:
             payload_with_created.append(base + (r["created_at"],))
         else:
             payload_no_created.append(base)
 
-    sql_with_created = (
-        "INSERT OR IGNORE INTO requests "
-        "(id, pin_id, csr_id, category_id, district_id, title, description, status, start_at, end_at, volunteers, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
-    )
     sql_no_created = (
-        "INSERT OR IGNORE INTO requests "
-        "(id, pin_id, csr_id, category_id, district_id, title, description, status, start_at, end_at, volunteers) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
+        "INSERT OR IGNORE INTO requests ("
+        " id, pin_id, csr_id, category_id, district_id, title, description, "
+        " start_at, end_at, volunteers, "
+        " feedback_rating, feedback_comment, feedback_created_at"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
+    )
+
+    sql_with_created = (
+        "INSERT OR IGNORE INTO requests ("
+        " id, pin_id, csr_id, category_id, district_id, title, description, "
+        " start_at, end_at, volunteers, "
+        " feedback_rating, feedback_comment, feedback_created_at, created_at"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
     )
 
     cur = conn.cursor()
-    if payload_with_created:
-        cur.executemany(sql_with_created, payload_with_created)
     if payload_no_created:
         cur.executemany(sql_no_created, payload_no_created)
+    if payload_with_created:
+        cur.executemany(sql_with_created, payload_with_created)
+
     conn.commit()
     print(f"✅ requests: inserted (or ignored) {len(rows)} rows")
     return len(rows)

@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Create New Request</title>
+  <link rel="stylesheet" href="static/css/theme.css">
+  <link rel="stylesheet" href="static/css/base.css">
+  <link rel="stylesheet" href="static/css/layout.css">
+</head>
+<body>
+  <div class="page container">
+    <div class="page-header">
+      <h2 class="page-title">Create New Request</h2>
+    </div>
+
+    <section class="content card">
+      <form id="newRequestForm" class="input-group">
+        <label>Request title:</label>
+        <input type="text" id="title" required class="input">
+
+        <label>Service type:</label>
+        <select id="category" required class="input">
+          <option value="">-- Select a service type --</option>
+          <option value="Food Assistance">Food Assistance</option>
+          <option value="Medical Support">Medical Support</option>
+          <option value="Transportation">Transportation</option>
+          <option value="Financial Aid">Financial Aid</option>
+          <option value="Others">Others</option>
+        </select>
+
+        <label>Date needed:</label>
+        <input type="date" id="date" required class="input">
+
+        <label>Description:</label>
+        <textarea id="desc" required class="input"></textarea>
+
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary">Submit</button>
+          <button type="button" class="btn btn-outline" onclick="window.location.href='PIN_landing_page.html'">Cancel</button>
+        </div>
+      </form>
+    </section>
+  </div>
+
+  <script src="mock_requests.js"></script>
+  <script>
+    const mockRequests = window.mockRequests;
+
+    document.getElementById("newRequestForm").addEventListener("submit", e => {
+      e.preventDefault();
+      const newId = mockRequests.length > 0 ? mockRequests[mockRequests.length - 1].id + 1 : 1;
+
+      const newRequest = {
+        id: newId,
+        title: document.getElementById("title").value,
+        category: document.getElementById("category").value,
+        date: document.getElementById("date").value,
+        status: "pending",
+        desc: document.getElementById("desc").value
+      };
+
+      mockRequests.push(newRequest);
+      alert("New request created (mock). Redirecting to dashboard...");
+      window.location.href = "PIN_landing_page.html";
+    });
+  </script>
+</body>
+</html>

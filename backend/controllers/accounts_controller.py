@@ -1,7 +1,8 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, g
 from backend.services.accounts_service import AccountService
 from backend.repositories.accounts_repository import AccountsRepository
 from backend.db_session import get_db
+from backend.auth import login_required, require_role
 
 # Blueprint for accounts endpoints
 accounts_bp = Blueprint("accounts", __name__)
@@ -20,6 +21,8 @@ def create_account():
 
 # Get single account by ID
 @accounts_bp.get("/<int:account_id>")
+@login_required
+@require_role("UserAdmin")
 def get_account(account_id: int):
     service = _service()
     account = service.get_account_by_id(account_id)
@@ -30,6 +33,8 @@ def get_account(account_id: int):
 
 # List all accounts
 @accounts_bp.get("/")
+@login_required
+@require_role("UserAdmin")
 def list_accounts():
     service = _service()
     accounts = service.list_accounts()
@@ -37,6 +42,8 @@ def list_accounts():
 
 # Update account
 @accounts_bp.put("/<int:account_id>")
+@login_required
+@require_role("UserAdmin")
 def update_account(account_id: int):
     service = _service()
     data = request.get_json() or {}
@@ -47,6 +54,8 @@ def update_account(account_id: int):
 
 # Delete account
 @accounts_bp.delete("/<int:account_id>")
+@login_required
+@require_role("UserAdmin")
 def delete_account(account_id):
     service = _service()
     success = service.delete_account(account_id)
@@ -56,6 +65,8 @@ def delete_account(account_id):
 
 # Search account
 @accounts_bp.get("/search")
+@login_required
+@require_role("UserAdmin")
 def search_accounts():
     service = _service()
     """

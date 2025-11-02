@@ -7,10 +7,16 @@ class CategoriesService:
     def __init__(self, repository):
         self.repository = repository
 
-    def create_category(self, data: Dict[str, Any]) -> Dict[str, Any]:
+    @staticmethod
+    def _require_pm(role: Optional[str]):
+        if role != "PlatformManager":
+            raise PermissionError("PlatformManager role required")
+
+    def create_category(self, data: Dict[str, Any], *, acting_role: Optional[str] = None) -> Dict[str, Any]:
         """Validate payload and create a category, returning the created row."""
         # Validate with schema (id should be omitted on create)
-        cat = Category(**data)
+        self._require_pm(acting_role)
+        cat = Category(**(data or {}))
 
         # Persist via repository
         created = self.repository.create_category(
@@ -22,35 +28,28 @@ class CategoriesService:
         fresh = self.repository.get_category_by_id(created["id"])
         return fresh or created
 
-    def get_category_by_id(self, category_id: int) -> Optional[Dict[str, Any]]:
-        """Return a single category or None."""
+    def get_category_by_id(self, category_id: int, *, acting_role: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        self._require_pm(acting_role)
         return self.repository.get_category_by_id(category_id)
 
-    def list_categories(self) -> List[Dict[str, Any]]:
-        """Return all categories."""
+    def list_categories(self, *, acting_role: Optional[str] = None) -> List[Dict[str, Any]]:
+        self._require_pm(acting_role)
         return self.repository.list_categories()
 
-    def update_category(self, category_id: int, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Apply updates after schema re-validation on a merged view."""
+    def update_category(self, category_id: int, data: Dict[str, Any], *, acting_role: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        self._require_pm(acting_role)
         current = self.repository.get_category_by_id(category_id)
         if not current:
             return None
-
-        # Merge and validate (keeps invariants: name not empty, etc.)
         merged = {**current, **(data or {})}
         Category(**merged)  # validation only
-
-        # Persist updates
         self.repository.update_category(category_id, **(data or {}))
-
-        # Read back and return the latest state
         return self.repository.get_category_by_id(category_id)
 
-    def delete_category(self, category_id: int) -> bool:
-        """Delete the category; return True if deleted, False if missing."""
+    def delete_category(self, category_id: int, *, acting_role: Optional[str] = None) -> bool:
+        self._require_pm(acting_role)
         try:
             self.repository.delete_category(category_id)
             return True
         except ValueError:
-            # Repository raises ValueError when row not found
             return False

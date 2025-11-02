@@ -61,7 +61,10 @@ class AccountService:
         rows = self.repository.list_accounts()
         return self._strip_password_list(rows)
 
-    def update_account(self, account_id: int, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def update_account(self, account_id: int, data: Dict[str, Any], *, acting_role: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        if acting_role != "UserAdmin":
+            raise PermissionError("UserAdmin role required to update accounts")
+
         current = self.repository.get_account_by_id(account_id)
         if not current:
             return None
@@ -87,12 +90,13 @@ class AccountService:
         updated = self.repository.get_account_by_id(account_id)
         return self._strip_password(updated)
 
-    def delete_account(self, account_id):
+    def delete_account(self, account_id: int, *, acting_role: Optional[str] = None):
+        if acting_role != "UserAdmin":
+            raise PermissionError("UserAdmin role required to delete accounts")
         try:
-            self.repository.delete_account(account_id)  # raises ValueError if not found
+            self.repository.delete_account(account_id)
             return True
         except ValueError:
-            # Normalize to boolean for controller -> 404
             return False
     
 

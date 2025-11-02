@@ -1,4 +1,3 @@
-# backend/app.py
 from __future__ import annotations
 import sys
 import sqlite3
@@ -6,6 +5,7 @@ from pathlib import Path
 from flask import Flask, jsonify, g
 from flask_cors import CORS
 from pydantic import ValidationError
+from datetime import timedelta
 
 # -----------------------------
 # Paths & import wiring
@@ -32,17 +32,12 @@ from backend.db_session import close_db
 def _apply_schema_idempotent(conn, sql_text: str):
     """Apply schema; ignore 'already exists' errors to be idempotent."""
     cur = conn.cursor()
-    stmts = [s.strip() for s in sql_text.split(";") if s.strip()]
-    for s in stmts:
-        try:
-            cur.execute(s)
-        except sqlite3.OperationalError as e:
-            msg = str(e).lower()
-            # ignore common idempotency issues
-            if ("already exists" in msg) or ("duplicate column name" in msg) or ("index" in msg and "already exists" in msg):
-                continue
-            raise
-    conn.commit()
+    try:
+        cur.executescript(sql_text)
+    except sqlite3.OperationalError as e:
+        raise
+    finally:
+        conn.commit()
 
 def _ensure_schema_then_seed():
     """Create/upgrade schema and seed using a single one-off connection."""
@@ -66,24 +61,62 @@ def _ensure_schema_then_seed():
 # -----------------------------
 def create_app():
     app = Flask(__name__)
-    # CORS for all /api/* endpoints (adjust as needed)
+
+    # 1) Config
+    app.config.update(
+        SECRET_KEY="dev-secret-key",      # 코드 안에 하드코딩
+        SESSION_COOKIE_HTTPONLY=True,
+        SESSION_COOKIE_SAMESITE="Lax",
+        SESSION_COOKIE_SECURE=False,
+        PERMANENT_SESSION_LIFETIME=timedelta(hours=8),
+        SESSION_PERMANENT=True,
+    )
+
+    # 2) Extensions: CORS for all /api/* endpoints (adjust as needed)
     CORS(app, resources={r"/api/*": {"origins": "*"}})
 
-    # Boot: schema → seed (safe to call at every start)
+    # 3) Boot: schema → seed (safe to call at every start)
     _ensure_schema_then_seed()
 
-    # Close DB per request/app context
+    # 4) Close DB per request/app context
     app.teardown_appcontext(close_db)
 
-    # Register blueprints (blueprints must not set their own url_prefix)
+    # 5) Register blueprints (blueprints must not set their own url_prefix)
+    from backend.controllers.auth_controller import auth_bp
+    app.register_blueprint(auth_bp, url_prefix="/api/auth")
+
     from backend.controllers.accounts_controller import accounts_bp
-    from backend.controllers.categories_controller import categories_bp
-    from backend.controllers.requests_controller import requests_bp
     app.register_blueprint(accounts_bp, url_prefix="/api/accounts")
+
+    from backend.controllers.categories_controller import categories_bp
     app.register_blueprint(categories_bp, url_prefix="/api/categories")
+
+    from backend.controllers.requests_controller import requests_bp
     app.register_blueprint(requests_bp, url_prefix="/api/requests")
 
-    # Global error handlers
+    from backend.controllers.engagement_controller import engagements_bp
+    app.register_blueprint(engagements_bp, url_prefix="/api/engagements")
+
+    from backend.controllers.feedback_controller import feedback_bp
+    app.register_blueprint(feedback_bp, url_prefix="/api/feedbacks")
+
+    from backend.controllers.notifications_controller import notifications_bp
+    app.register_blueprint(notifications_bp, url_prefix="/api/notifications")
+
+    from backend.controllers.reports_controller import reports_bp
+    app.register_blueprint(reports_bp, url_prefix="/api/reports")
+
+    from backend.controllers.shortlist_controller import shortlists_bp
+    app.register_blueprint(shortlists_bp, url_prefix="/api/shortlists")
+
+    from backend.controllers.matching_controller import matching_bp
+    app.register_blueprint(matching_bp, url_prefix="/api")
+
+    from backend.controllers.requests_search_controller import requests_search_bp
+    app.register_blueprint(requests_search_bp, url_prefix="/api/requests")
+
+
+    # 6) Global error handlers
     @app.errorhandler(ValidationError)
     def handle_validation_error(e):
         return jsonify({"error": e.errors()}), 400
