@@ -70,6 +70,7 @@ CREATE TABLE IF NOT EXISTS requests (
     created_at          TEXT    NOT NULL DEFAULT (datetime('now')),
     volunteers          TEXT,
     view_count          INTEGER NOT NULL DEFAULT 0,
+    shortlist_count     INTEGER NOT NULL DEFAULT 0,
     feedback_rating     INTEGER CHECK (feedback_rating BETWEEN 1 AND 5),
     feedback_comment    TEXT,
     feedback_created_at TEXT,
@@ -120,19 +121,51 @@ SELECT
 FROM requests r;
 
 
-CREATE VIEW IF NOT EXISTS v_requests AS
+DROP VIEW IF EXISTS v_requests;
+CREATE VIEW v_requests AS
 SELECT
     r.id,
-    c.name   AS type,
-    rg.name   AS region,
-    d.name    AS district,
+    r.pin_id,
+    COALESCE(p.name, 'PIN #' || r.pin_id)               AS pin_name,
+    r.csr_id,
+    cusr.name                                           AS csr_name,
+
+    r.category_id,
+    cat.name                                            AS category_name,
+    r.district_id,
+    d.name                                              AS district_name,
+    rg.id                                               AS region_id,
+    rg.name                                             AS region_name,
+
     r.title,
     r.description,
-    v.computed_status AS status
+    r.start_at,
+    r.end_at,
+    r.created_at,
+    r.view_count,
+    r.shortlist_count,
+
+    r.feedback_rating,
+    r.feedback_comment,
+    r.feedback_created_at,
+
+    vs.computed_status                                  AS status,
+
+    COALESCE(r.volunteers, '[]')                        AS volunteers,
+    (SELECT COUNT(*) FROM json_each(COALESCE(r.volunteers, '[]'))) AS volunteers_count,
+    (
+      SELECT GROUP_CONCAT(vv.name, ', ')
+      FROM json_each(COALESCE(r.volunteers, '[]')) je
+      LEFT JOIN volunteers vv ON vv.id = je.value
+    )                                                   AS volunteer_names
+
 FROM requests r
-JOIN categories c ON r.category_id = c.id
-JOIN districts  d ON r.district_id = d.id
-JOIN regions   rg ON d.region_id = rg.id;
+JOIN categories   cat  ON cat.id  = r.category_id
+JOIN districts    d    ON d.id    = r.district_id
+JOIN regions      rg   ON rg.id   = d.region_id
+LEFT JOIN accounts p    ON p.id    = r.pin_id
+LEFT JOIN accounts cusr ON cusr.id = r.csr_id
+LEFT JOIN v_requests_status vs ON vs.id = r.id;
 
 CREATE INDEX IF NOT EXISTS idx_districts_region     ON districts(region_id);
 CREATE INDEX IF NOT EXISTS idx_requests_district    ON requests(district_id);
@@ -146,12 +179,3 @@ CREATE INDEX IF NOT EXISTS idx_shortlist_request    ON shortlist(request_id);
 CREATE INDEX IF NOT EXISTS idx_requests_pin_startat ON requests(pin_id, start_at);
 CREATE INDEX IF NOT EXISTS idx_notifications_user_created ON notifications(user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_notifications_user_unread ON notifications(user_id, read_at);
-
-CREATE TRIGGER IF NOT EXISTS trg_shortlist_cleanup_on_assign
-AFTER UPDATE OF csr_id ON requests
-WHEN NEW.csr_id IS NOT NULL
-BEGIN
-  DELETE FROM shortlist
-  WHERE request_id = NEW.id
-    AND csr_id <> NEW.csr_id;
-END;

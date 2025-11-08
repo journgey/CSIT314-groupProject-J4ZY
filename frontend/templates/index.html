@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Index - Login</title>
+  <link rel="stylesheet" href="/static/css/theme.css">
+  <link rel="stylesheet" href="/static/css/layout.css">
+  <link rel="stylesheet" href="/static/css/base.css">
+  <style>
+    .login-wrapper {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      background: var(--bg-light, #f8f9fa);
+    }
+    .login-card {
+      width: 100%;
+      max-width: 420px;
+      padding: 2rem 2.5rem;
+      text-align: center;
+    }
+    .login-card .form-group { margin-bottom: 1.2rem; text-align: left; }
+    .login-card .form-group label { display: block; margin-bottom: 0.4rem; font-weight: 500; }
+    .login-card .input { width: 100%; padding: 10px; border-radius: 6px; }
+    .login-card .btn { width: 100%; margin-top: 0.8rem; padding: 0.8rem; }
+    .login-card .error-text { color: #b00020; margin-top: 1rem; min-height: 1.2em; }
+    .login-card hr { margin: 1.8rem 0; }
+    .login-card p { margin-bottom: 0.6rem; }
+    .sr-only { position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+  </style>
+</head>
+<body>
+  <main class="login-wrapper">
+    <section class="card login-card">
+      <h1 class="page-title">Matching Volunteer Platform</h1>
+
+      <form id="loginForm" class="form" novalidate>
+        <div class="form-group">
+          <label for="email">Email</label>
+          <input id="email" name="email" type="email" autocomplete="username" class="input" required />
+        </div>
+
+        <div class="form-group">
+          <label for="password">Password</label>
+          <input id="password" name="password" type="password" autocomplete="current-password" class="input" required />
+        </div>
+
+        <button id="loginBtn" type="submit" class="btn btn-primary">Login</button>
+
+        <div id="errorBox" class="error-text" role="alert" aria-live="polite"></div>
+        <div id="hint" class="muted sr-only">Submitting…</div>
+      </form>
+
+      <hr class="divider"/>
+
+      <div>
+        <p>Don't have an account?</p>
+        <button class="btn btn-outline" onclick="window.location.href='/create_account'">
+          Create Account
+        </button>
+      </div>
+    </section>
+  </main>
+
+<script>
+(() => {
+  // ---- minimal utils compatible with previous index.html usage ----
+  const ENDPOINTS = {
+    AUTH_ME: "/api/auth/me",
+    AUTH_LOGIN: "/api/auth/login",
+  };
+
+  async function apiFetch(url, opts = {}) {
+    const res = await fetch(url, { credentials: "include", ...opts });
+    if (!res.ok) {
+      let msg = "HTTP " + res.status;
+      try {
+        const text = await res.text();
+        try { const j = JSON.parse(text); msg = j?.error || j?.message || msg; }
+        catch { msg = text || msg; }
+      } catch {}
+      throw new Error(`${url} → ${msg}`);
+    }
+    if (res.status === 204) return null;
+    const text = await res.text();
+    return text ? JSON.parse(text) : null;
+  }
+
+  const http = {
+    get: (url) => apiFetch(url),
+    post: (url, body) => apiFetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body ?? {})
+    }),
+  };
+
+  // ---- auth helpers (login + guard) ----
+  function normalizeRole(role) {
+    const r = String(role || "").trim().toLowerCase();
+    if (!r) return "";
+    if (r === "useradmin" || r === "ua" || r === "user_admin") return "UserAdmin";
+    if (r === "platformmanager" || r === "pm" || r === "platform_manager") return "PlatformManager";
+    if (r === "pin") return "PIN";
+    if (r === "csr") return "CSR";
+    return role;
+  }
+  function redirectByRole(role) {
+    const map = { UserAdmin: "/useradmin", PlatformManager: "/pm", PIN: "/pin", CSR: "/csr" };
+    const key = normalizeRole(role);
+    const target = map[key];
+    if (!target) return false;
+    window.location.href = target;
+    return true;
+  }
+  async function installAuthGuard(requiredRole = null, redirectIfAuthedAtRoot = false) {
+    try {
+      const me = await http.get(ENDPOINTS.AUTH_ME);
+      if (redirectIfAuthedAtRoot && me?.role) {
+        redirectByRole(me.role);
+        return;
+      }
+      if (!redirectIfAuthedAtRoot && !me?.role) {
+        window.location.href = "/";
+        return;
+      }
+      if (!redirectIfAuthedAtRoot && requiredRole) {
+        const ok = normalizeRole(me.role) === requiredRole;
+        if (!ok) window.location.href = "/";
+      }
+    } catch {
+      if (!redirectIfAuthedAtRoot) window.location.href = "/";
+    }
+  }
+
+  // ---- forms helpers (API-compatible) ----
+  const forms = {
+    emailRe: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
+    get(selOrEl) {
+      const el = typeof selOrEl === "string" ? document.querySelector(selOrEl) : selOrEl;
+      return (el?.value || "").trim();
+    },
+    require(...vals) { return vals.every(v => v !== null && v !== undefined && String(v).trim() !== ""); },
+    reportInvalid(inputEl, message) {
+      if (!inputEl) return false;
+      if (message) inputEl.setCustomValidity(message);
+      inputEl.reportValidity();
+      inputEl.focus();
+      inputEl.setCustomValidity("");
+      return false;
+    },
+    withPending(btnEl, hintEl, fn) {
+      return async (...args) => {
+        if (btnEl) btnEl.disabled = true;
+        if (hintEl) hintEl.classList.remove("sr-only");
+        try { return await fn(...args); }
+        finally {
+          if (btnEl) btnEl.disabled = false;
+          if (hintEl) hintEl.classList.add("sr-only");
+        }
+      };
+    },
+  };
+
+  const auth = {
+    login(email, password) {
+      return http.post(ENDPOINTS.AUTH_LOGIN, { email, password });
+    }
+  };
+
+  // ---- index page wiring (unchanged semantics) ----
+  const form = document.getElementById('loginForm');
+  const btn  = document.getElementById('loginBtn');
+  const err  = document.getElementById('errorBox');
+  const hint = document.getElementById('hint');
+
+  document.addEventListener("DOMContentLoaded", () => {
+    // preserves: utils.installAuthGuard(null, true)
+    installAuthGuard(null, true);
+  });
+
+  const submitSafely = forms.withPending(btn, hint, async () => {
+    err.textContent = "";
+
+    const email = forms.get('#email');
+    const password = forms.get('#password');
+
+    if (!forms.require(email, password)) {
+      err.textContent = "Please enter both email and password.";
+      return;
+    }
+    if (!forms.emailRe.test(email)) {
+      return forms.reportInvalid(document.getElementById('email'), "Please enter a valid email address.");
+    }
+
+    const data = await auth.login(email, password);
+    const role = data?.user?.role ?? data?.role ?? "";
+    if (!redirectByRole(role)) {
+      err.textContent = `Role not recognized: ${role}`;
+    }
+  });
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try { await submitSafely(); }
+    catch (ex) { err.textContent = ex?.message || "Login failed."; }
+  });
+})();
+</script>
+</body>
+</html>

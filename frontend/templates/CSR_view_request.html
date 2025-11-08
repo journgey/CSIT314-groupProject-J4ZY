@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>CSR – View Request</title>
+  <link rel="stylesheet" href="/static/css/theme.css" />
+  <link rel="stylesheet" href="/static/css/layout.css" />
+  <link rel="stylesheet" href="/static/css/base.css" />
+  <style>
+    /* Small stat chips */
+    .stats { display:flex; gap:10px; margin: 8px 0 0; flex-wrap: wrap; }
+    .chip { display:inline-flex; align-items:center; gap:6px; padding:6px 10px; border-radius:999px; background: var(--color-bg-light); border:1px solid var(--color-border); font-size:0.9rem; }
+    .chip .num { font-weight:700; }
+
+    /* Readonly look */
+    .readonly-field { padding: 8px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-bg-light); font-size: 0.95rem; display: inline-block; min-height: 38px; }
+    .input[disabled], select[disabled], textarea[disabled] { background: var(--color-bg-light); }
+
+    .form-actions { display:flex; gap:10px; justify-content: space-between; margin-top: 16px; flex-wrap: wrap; }
+    .actions-right { display:flex; gap:10px; }
+    .grow { flex: 1; }
+    .muted { color:#666; }
+    .danger { color:#b00020; }
+  </style>
+</head>
+<body>
+  <main class="container page">
+    <div class="page-header">
+      <h2 class="page-title">View Request</h2>
+      <!-- Toolbar buttons will be swapped by JS depending on status -->
+      <div class="toolbar" id="toolbarBtns">
+        <!-- Default toolbar (for non-completed states) -->
+        <button class="btn btn-outline" id="btnBackDefault">← Back to Pending</button>
+        <button class="btn btn-outline" id="btnDashDefault">← Back to Dashboard</button>
+      </div>
+    </div>
+
+    <div id="flash" class="muted"></div>
+
+    <section class="card content">
+      <form id="viewRequestForm">
+        <div class="form-grid">
+          <div class="form-group"><label>Request Title:</label><input type="text" id="title" class="input" disabled></div>
+          <div class="form-group"><label>Service Type:</label><select id="category" class="input" disabled></select></div>
+
+          <div class="form-group"><label>Region:</label><select id="region" class="input" disabled></select></div>
+          <div class="form-group"><label>District:</label><select id="district" class="input" disabled></select></div>
+
+          <div class="form-group"><label>Status:</label><span id="status" class="readonly-field"></span></div>
+          <div class="form-group"><label>Date Needed</label><span id="date" class="readonly-field"></span></div>
+
+          <div class="form-group"><label>PIN</label><span id="pinName" class="readonly-field"></span></div>
+          <div class="form-group" id="csrGroup"><label>CSR</label><span id="csrName" class="readonly-field"></span></div>
+
+          <div class="form-group" id="volsGroup" style="grid-column: span 2;"><label>Volunteers</label><span id="volunteerNames" class="readonly-field" style="width:100%;"></span></div>
+
+          <div class="form-group" style="grid-column: span 2;"><label>Description:</label><textarea id="desc" class="input" disabled></textarea></div>
+        </div>
+
+        <div class="stats" style="margin-top:16px;">
+          <span class="chip">Views: <span id="viewsCount" class="num">0</span></span>
+          <span class="chip">Shortlisted: <span id="shortlistCount" class="num">0</span></span>
+        </div>
+
+        <!-- This whole action block will be hidden when status === 'completed' -->
+        <div class="form-actions" id="actionsBlock">
+          <div class="grow"><small id="hint" class="muted"></small></div>
+          <div class="actions-right">
+            <button id="shortlistBtn" type="button" class="btn btn-outline">Add to Shortlist</button>
+            <button id="acceptBtn" type="button" class="btn btn-primary">Accept & Assign</button>
+          </div>
+        </div>
+      </form>
+    </section>
+  </main>
+
+<script>
+/* ---------------- Standalone helpers (no external utils) ---------------- */
+
+// HTTP helper (JSON, send cookies)
+async function apiFetch(url, opts = {}) {
+  const res = await fetch(url, { credentials: "include", ...opts });
+  if (!res.ok) {
+    let msg = `HTTP ${res.status}`;
+    try { const t = await res.text(); try { const j = JSON.parse(t); msg = j?.error || j?.message || msg; } catch { msg = t || msg; } } catch {}
+    throw new Error(`${url} → ${msg}`);
+  }
+  if (res.status === 204) return null;
+  const txt = await res.text();
+  return txt ? JSON.parse(txt) : null;
+}
+const http = {
+  get:  (u)    => apiFetch(u),
+  post: (u,b)  => apiFetch(u, { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(b ?? {}) })
+};
+
+// Role normalization
+function normalizeRole(r){
+  const x = String(r||"").trim().toLowerCase();
+  if (x==="pin") return "PIN";
+  if (x==="csr") return "CSR";
+  if (["pm","platformmanager"].includes(x)) return "PlatformManager";
+  if (["ua","useradmin"].includes(x)) return "UserAdmin";
+  return r||"";
+}
+
+// CSR-only guard
+async function installCSRGuard(){
+  try{
+    const me = await http.get("/api/auth/me");
+    if (normalizeRole(me?.role) !== "CSR") { location.replace("/"); return null; }
+    return me; // { id, role, ... }
+  }catch{ location.replace("/"); return null; }
+}
+
+// Escape HTML
+function escapeHtml(s){ return String(s??"").replace(/[&<>"']/g, m=>({"&":"&amp;","<":"&lt;","&gt;":"&gt;","\"":"&quot;","'":"&#39;"}[m])); }
+
+// Date helpers
+function ddmmyyyy_hhmm(iso){
+  if(!iso) return "";
+  const s = String(iso).replace("T"," ").trim();
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ ](\d{2}):(\d{2}))?/);
+  if(!m) return s;
+  const [,y,mo,d,hh="00",mm="00"] = m;
+  return `${d}-${mo}-${y} ${hh}:${mm}`;
+}
+function periodText(r){
+  const a = ddmmyyyy_hhmm(r.start_at);
+  const b = ddmmyyyy_hhmm(r.end_at);
+  return (a && b) ? `${a} ~ ${b}` : (a || b || "");
+}
+
+// API facades
+const catsApi = { list:()=>http.get("/api/category/").then(x=>Array.isArray(x)?x:(x?.items??[])) };
+const geoApi  = {
+  regions:   ()=>http.get("/api/address/regions").catch(()=>[]),
+  districts: (rid)=>http.get(`/api/address/districts?region_id=${encodeURIComponent(rid)}`).catch(()=>[])
+};
+const reqApi  = { get:(id)=>http.get(`/api/request/${encodeURIComponent(id)}`) };
+
+/* ---------------- Page bootstrap ---------------- */
+document.addEventListener("DOMContentLoaded", async () => {
+  const me = await installCSRGuard();
+  if (!me) return;
+
+  const csrId = me.id;
+  const id = parseInt(new URLSearchParams(location.search).get("id") || "", 10);
+  const $flash  = document.getElementById("flash");
+  const $hint   = document.getElementById("hint");
+  const $accept = document.getElementById("acceptBtn");
+  const $shortl = document.getElementById("shortlistBtn");
+  const $actions= document.getElementById("actionsBlock");
+
+  // Toolbar elements
+  const $toolbar = document.getElementById("toolbarBtns");
+  const $btnBackDefault = document.getElementById("btnBackDefault");
+  const $btnDashDefault = document.getElementById("btnDashDefault");
+
+  // Wire default toolbar buttons
+  $btnBackDefault.addEventListener("click", () => window.location.href = "/csr/all_requests");
+  $btnDashDefault.addEventListener("click", () => window.location.href = "/csr");
+
+  if (!id) { $flash.textContent = "Invalid request id."; return; }
+
+  // Load masters (categories + regions)
+  const [$cats, $regs] = await Promise.all([catsApi.list(), geoApi.regions()]);
+  document.getElementById("category").innerHTML =
+    ($cats||[]).map(c=>`<option value="${c.id}">${escapeHtml(c.name)}</option>`).join("");
+  document.getElementById("region").innerHTML =
+    ($regs||[]).map(r=>`<option value="${r.id}">${escapeHtml(r.name)}</option>`).join("");
+
+  // Load request
+  const r = await reqApi.get(id);
+  if(!r){ $flash.textContent = "Request not found."; return; }
+
+  // Fill basic fields
+  document.getElementById("title").value          = r.title || "";
+  document.getElementById("category").value       = r.category_id ?? "";
+  document.getElementById("region").value         = r.region_id ?? "";
+  document.getElementById("status").textContent   = r.computed_status || r.status || "";
+  document.getElementById("date").textContent     = periodText(r);
+  document.getElementById("desc").value           = r.description || "";
+
+  // Region → Districts
+  try{
+    const dists = await geoApi.districts(r.region_id);
+    document.getElementById("district").innerHTML =
+      (dists||[]).map(d=>`<option value="${d.id}">${escapeHtml(d.name)}</option>`).join("");
+    document.getElementById("district").value = r.district_id ?? "";
+  }catch{}
+
+  // Names (PIN/CSR)
+  document.getElementById("pinName").textContent = r.pin_name || (r.pin_id != null ? `PIN #${r.pin_id}` : "—");
+  const csrName = r.csr_name || (r.csr_id != null ? `CSR #${r.csr_id}` : "");
+  if (csrName) {
+    document.getElementById("csrName").textContent = csrName;
+    document.getElementById("csrGroup").style.display = "";
+  } else {
+    document.getElementById("csrGroup").style.display = "none";
+  }
+
+  // Volunteers
+  const volsText = r.volunteer_names || (Array.isArray(r.volunteers) ? r.volunteers.join(", ") : "");
+  if (volsText) {
+    document.getElementById("volunteerNames").textContent = volsText;
+    document.getElementById("volsGroup").style.display = "";
+  } else {
+    document.getElementById("volsGroup").style.display = "none";
+  }
+
+  // Counters
+  const $viewsChip = document.getElementById("viewsCount");
+  const $shortChip = document.getElementById("shortlistCount");
+  $viewsChip.textContent  = (typeof r.view_count === "number") ? r.view_count : (r.views ?? 0);
+  $shortChip.textContent  = (typeof r.shortlist_count === "number") ? r.shortlist_count :
+                            (typeof r.shortlisted_count === "number") ? r.shortlisted_count : 0;
+
+  // Toggle UI by status
+  const st = String(r.computed_status || r.status || "").toLowerCase();
+  const isCompleted = (st === "completed");
+  const isAccepted  = (st === "accepted");
+
+  if (isCompleted || isAccepted) {
+    // Toolbar: show only Back to Dashboard
+    $toolbar.innerHTML = `
+      <button class="btn btn-outline" id="btnBackDashboard">← Back to Dashboard</button>
+    `;
+    document.getElementById("btnBackDashboard").addEventListener("click", () => window.location.href = "/csr");
+
+    // Hide all action buttons (Shortlist / Accept)
+    if ($actions) $actions.style.display = "none";
+  } else {
+    // Non-completed & non-accepted: show normal buttons
+    const acceptable = (st === "requested" || st === "pending");
+    if (!acceptable) {
+      document.getElementById("hint").innerHTML = `<span class="danger">This request is not pending (current status: ${st || "-" }).</span>`;
+      document.getElementById("acceptBtn").disabled = true;
+    } else {
+      document.getElementById("hint").textContent = "Click Accept & Assign to proceed with matching.";
+    }
+
+    document.getElementById("acceptBtn").addEventListener("click", () => {
+      const btn = document.getElementById("acceptBtn");
+      if (btn.disabled) return;
+      window.location.href = `/csr/match?id=${encodeURIComponent(id)}`;
+    });
+
+    document.getElementById("shortlistBtn").addEventListener("click", async () => {
+      const btn = document.getElementById("shortlistBtn");
+      try {
+        btn.disabled = true;
+        btn.textContent = "Adding…";
+        const res = await http.post("/api/shortlist/", { csr_id: csrId, request_id: id });
+        const duplicate = !!res?.duplicate;
+        if (!duplicate) {
+          const cur = parseInt($shortChip.textContent || "0", 10) || 0;
+          $shortChip.textContent = cur + 1;
+        }
+        window.location.href = "/csr/all_requests";
+      } catch (err) {
+        console.error(err);
+        alert(err?.message || "Failed to add to shortlist.");
+        btn.disabled = false;
+        btn.textContent = "Add to Shortlist";
+      }
+    });
+  }
+
+  // Prevent default form submit
+  document.getElementById("viewRequestForm")?.addEventListener("submit", e => e.preventDefault());
+});
+</script>
+</body>
+</html>

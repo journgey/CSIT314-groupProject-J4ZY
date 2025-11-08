@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>PIN Dashboard</title>
+  <link rel="stylesheet" href="/static/css/theme.css" />
+  <link rel="stylesheet" href="/static/css/base.css" />
+  <link rel="stylesheet" href="/static/css/layout.css" />
+</head>
+<body>
+  <div class="page container">
+    <div class="page-head">
+      <h2 class="page-title">Welcome to PIN Dashboard</h2>
+      <div class="right-group">
+        <button id="logoutBtn" class="btn btn-outline">Logout</button>
+      </div>
+    </div>
+
+    <div class="grid-2" style="gap: 16px; margin-top: 24px;">
+      <section class="card">
+        <h3>Account Overview</h3>
+        <div class="stats-grid">
+          <div class="stat-card"><h2 id="totalCount">0</h2><p>Total</p></div>
+          <div class="stat-card"><h2 id="pendingCount">0</h2><p>Pending</p></div>
+          <div class="stat-card"><h2 id="shortlistedCount">0</h2><p>Shortlisted</p></div>
+          <div class="stat-card"><h2 id="acceptedCount">0</h2><p>Accepted</p></div>
+          <div class="stat-card"><h2 id="completedCount">0</h2><p>Completed</p></div>
+          <div class="stat-card"><h2 id="expiredCount">0</h2><p>Expired</p></div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h3>Notifications</h3>
+        <ul id="notificationsList" style="margin-top:12px; padding-left:20px;"></ul>
+      </section>
+    </div>
+
+    <section class="content card" style="margin-top: 24px;">
+      <h3>My Requests</h3>
+      <div class="toolbar" style="margin-bottom: 16px; margin-top: 12px;">
+        <button class="btn btn-outline" onclick="location.href='/pin/history'">View Completed Requests</button>
+        <button class="btn btn-primary" onclick="location.href='/pin/edit_request'">Add New Request</button>
+      </div>
+
+      <h3 class="section-header">Active Requests</h3>
+
+      <table class="table">
+        <thead>
+        <tr>
+          <th>Title</th><th>Category</th><th>Status</th>
+          <th>Date</th><th>Times shortlisted</th><th>Views</th><th>Actions</th>
+        </tr>
+        </thead>
+        <tbody id="requestTable"></tbody>
+      </table>
+    </section>
+  </div>
+
+<script>
+/* ==== Minimal utilities ==== */
+async function api(url, opts={}) {
+  const res = await fetch(url, {credentials:'include', ...opts});
+  if (!res.ok) {
+    const t = await res.text().catch(()=> "");
+    let msg = t;
+    try { msg = JSON.parse(t)?.message || JSON.parse(t)?.error || msg; } catch {}
+    throw new Error(msg || `HTTP ${res.status}`);
+  }
+  if (res.status === 204) return null;
+  const txt = await res.text();
+  return txt ? JSON.parse(txt) : null;
+}
+const http = {
+  get:(u)=>api(u),
+  post:(u,b)=>api(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})}),
+};
+
+async function guardPIN() {
+  const me = await http.get('/api/auth/me').catch(()=>null);
+  if (!me || String(me.role).toUpperCase()!=='PIN') { location.href='/'; throw new Error('No PIN'); }
+  return me;
+}
+function escapeHtml(s){return String(s??"").replace(/[&<>"']/g,m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));}
+function fmtDDMMYYYY_HHMM(iso){
+  if(!iso) return "";
+  const d = new Date(iso.replace(' ','T'));
+  const dd=`${d.getDate()}`.padStart(2,'0'), mm=`${d.getMonth()+1}`.padStart(2,'0');
+  const yyyy=d.getFullYear(), HH=`${d.getHours()}`.padStart(2,'0'), MM=`${d.getMinutes()}`.padStart(2,'0');
+  return `${dd}-${mm}-${yyyy} ${HH}:${MM}`;
+}
+function periodInline(r){
+  const a=fmtDDMMYYYY_HHMM(r.start_at), b=fmtDDMMYYYY_HHMM(r.end_at);
+  return (a&&b)?`${a} ~ ${b}`:(a||b||'-');
+}
+function normStatus(r){ return (r?.computed_status ?? r?.status ?? '').toString().toLowerCase() || '-'; }
+function isTerminal(s){ s=(s||'').toLowerCase(); return s==='completed'||s==='expired'; }
+function countByStatus(rows){
+  let pending=0,shortlisted=0,accepted=0,completed=0,expired=0;
+  for(const r of rows){
+    const s=normStatus(r);
+    if(s==='pending')pending++;
+    else if(s==='shortlisted')shortlisted++;
+    else if(s==='accepted')accepted++;
+    else if(s==='completed')completed++;
+    else if(s==='expired')expired++;
+  }
+  return { total:rows.length,pending,shortlisted,accepted,completed,expired };
+}
+function withPending(btn, fn){ return async(...a)=>{ const b=btn?.textContent; btn&&(btn.disabled=true); try{ return await fn(...a);} finally{ btn&&(btn.disabled=false, btn.textContent=b);} };}
+
+/* ==== Page logic ==== */
+document.addEventListener('DOMContentLoaded', async () => {
+  try{
+    const me = await guardPIN();
+    const [reqRes, catRes, notiRes] = await Promise.all([
+      http.get(`/api/request?pin_id=${encodeURIComponent(me.id)}`),
+      http.get('/api/category/'),
+      http.get('/api/notification').catch(()=>[]),
+    ]);
+
+    const rows = Array.isArray(reqRes)?reqRes:(reqRes?.items??[]);
+    const catList = Array.isArray(catRes)?catRes:(catRes?.items??[]);
+    const catMap = Object.fromEntries(catList.map(c=>[c.id, c.name||`#${c.id}`]));
+    const notis = Array.isArray(notiRes)?notiRes:(notiRes?.items??[]);
+
+    const s = countByStatus(rows);
+    document.getElementById('totalCount').textContent=s.total;
+    document.getElementById('pendingCount').textContent=s.pending;
+    document.getElementById('shortlistedCount').textContent=s.shortlisted;
+    document.getElementById('acceptedCount').textContent=s.accepted;
+    document.getElementById('completedCount').textContent=s.completed;
+    document.getElementById('expiredCount').textContent=s.expired;
+
+    const ul=document.getElementById('notificationsList'); ul.innerHTML='';
+    (notis||[]).forEach(n=>{ const li=document.createElement('li'); li.textContent=(n.message||n.text||'Notification')+(n.created_at?` (${n.created_at})`: ''); ul.appendChild(li); });
+
+    const tbody=document.getElementById('requestTable');
+    tbody.innerHTML = rows
+      .filter(r => !isTerminal(normStatus(r)))  // only active
+      .map(r=>{
+        const id=r.id;
+        const title=(r.title||'').trim();
+        const cat=catMap[r.category_id]||r.category_name||'-';
+        const s=normStatus(r);
+        const date=periodInline(r);
+        const sl=(r.shortlist_count ?? r.shortlisted_count ?? r.times_shortlisted ?? 0);
+        const vv=(r.view_count ?? r.views ?? 0);
+        return `
+          <tr>
+            <td><a href="/pin/view_request?id=${encodeURIComponent(id)}">${escapeHtml(title)}</a></td>
+            <td>${escapeHtml(cat)}</td>
+            <td>${escapeHtml(s)}</td>
+            <td>${escapeHtml(date)}</td>
+            <td>${sl}</td>
+            <td>${vv}</td>
+            <td><a class="btn btn-primary" href="/pin/edit_request?id=${encodeURIComponent(id)}">Edit/Delete</a></td>
+          </tr>`;
+      }).join('');
+
+    const logoutBtn=document.getElementById('logoutBtn');
+    logoutBtn.addEventListener('click', withPending(logoutBtn, async()=>{
+      await http.post('/api/auth/logout', {}); location.href='/';
+    }));
+
+  }catch(e){ console.error(e); alert(e.message||'Failed to load PIN dashboard.'); }
+});
+</script>
+</body>
+</html>

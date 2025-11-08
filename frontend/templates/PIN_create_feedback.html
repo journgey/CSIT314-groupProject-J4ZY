@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Provide Feedback</title>
+  <link rel="stylesheet" href="/static/css/theme.css" />
+  <link rel="stylesheet" href="/static/css/base.css" />
+  <link rel="stylesheet" href="/static/css/layout.css" />
+  <style>
+    .feedback-section { display:flex; flex-direction:column; gap:1rem; }
+    .readonly-info { display:grid; grid-template-columns:1fr 1fr; gap:1rem 2rem; }
+    .readonly-info label { font-weight:600; }
+    .readonly-info .value { display:block; padding:8px; background:#f8f8f8; border-radius:6px; border:1px solid #ddd; }
+    .rating-group { display:flex; flex-direction:row-reverse; justify-content:flex-end; gap:8px; align-items:center; }
+    .rating-group input[type="radio"] { display:none; }
+    .rating-group label { cursor:pointer; font-size:20px; }
+    .rating-group input[type="radio"]:checked ~ label { color:var(--color-primary); }
+    .modal { display:none; position:fixed; inset:0; background:rgba(0,0,0,.45); justify-content:center; align-items:center; }
+    .modal.open { display:flex; }
+    .modal-content { background:#fff; padding:18px; border-radius:10px; width:min(360px,92vw); text-align:center; }
+    #closeModalBtn { margin-top:10px; }
+  </style>
+</head>
+<body>
+  <div class="page container">
+    <div class="page-header">
+      <h2 class="page-title">Provide Feedback</h2>
+      <div class="toolbar"><a href="/pin" class="btn btn-outline">← Back</a></div>
+    </div>
+
+    <div id="flash" class="muted"></div>
+
+    <section class="content card">
+      <div class="readonly-info">
+        <div><label>Request</label><span id="reqTitle" class="value"></span></div>
+        <div><label>Status</label><span id="reqStatus" class="value"></span></div>
+      </div>
+
+      <form id="feedbackForm" class="feedback-section">
+        <div>
+          <label>Rating</label>
+          <div class="rating-group" id="ratingGroup">
+            <input type="radio" name="rating" id="r5" value="5"><label for="r5">★</label>
+            <input type="radio" name="rating" id="r4" value="4"><label for="r4">★</label>
+            <input type="radio" name="rating" id="r3" value="3"><label for="r3">★</label>
+            <input type="radio" name="rating" id="r2" value="2"><label for="r2">★</label>
+            <input type="radio" name="rating" id="r1" value="1"><label for="r1">★</label>
+          </div>
+        </div>
+
+        <div>
+          <label>Comment</label>
+          <textarea id="comment" class="input" rows="4" placeholder="Your feedback..."></textarea>
+        </div>
+
+        <div>
+          <button id="submitBtn" class="btn btn-primary" type="submit">Submit Feedback</button>
+        </div>
+      </form>
+    </section>
+  </div>
+
+  <!-- Thank You Modal -->
+  <div id="thankYouModal" class="modal" aria-hidden="true">
+    <div class="modal-content">
+      <h3>🎉 Thank You!</h3>
+      <p>Your feedback has been successfully submitted.</p>
+      <button id="closeModalBtn" class="btn btn-outline">OK</button>
+    </div>
+  </div>
+
+<script>
+/* mini utils */
+async function apiFetch(url, opts={}){ const res=await fetch(url,{credentials:"include",...opts}); if(!res.ok){ let m=`HTTP ${res.status}`; try{const t=await res.text(); try{const j=JSON.parse(t); m=j?.error||j?.message||m;}catch{m=t||m;}}catch{} throw new Error(`${url} → ${m}`);} if(res.status===204) return null; const txt=await res.text(); return txt?JSON.parse(txt):null; }
+const http={ get:(u)=>apiFetch(u), post:(u,b)=>apiFetch(u,{method:"POST",headers:{ "Content-Type":"application/json" },body:JSON.stringify(b??{})}) };
+const $=(s,r=document)=>r.querySelector(s);
+function normalizeRole(r){ const x=String(r||"").trim().toLowerCase(); if(x==="pin")return "PIN"; if(x==="csr")return "CSR"; if(["pm","platformmanager"].includes(x))return "PlatformManager"; if(["ua","useradmin"].includes(x))return "UserAdmin"; return r||""; }
+async function installAuthGuard(reqRole=null){ try{ const me=await http.get("/api/auth/me"); const role=normalizeRole(me?.role); if(!role) return location.replace("/"); if(reqRole && role!==reqRole) return location.replace("/"); return me; }catch{ location.replace("/"); } }
+function getParam(k){ return new URLSearchParams(location.search).get(k); }
+const reqApi={ get:(id)=>http.get(`/api/request/${encodeURIComponent(id)}`) };
+const fbApi={ create:(payload)=>http.post("/api/feedback/", payload) };
+
+document.addEventListener("DOMContentLoaded", async ()=>{
+  await installAuthGuard("PIN");
+  const request_id = getParam("request_id");
+  if (!request_id) { alert("No request id"); return history.back(); }
+
+  // Load request summary for header
+  try{
+    const r = await reqApi.get(request_id);
+    $("#reqTitle").textContent = r?.title || "";
+    $("#reqStatus").textContent = r?.computed_status || r?.status || "";
+  }catch{}
+
+  $("#feedbackForm").addEventListener("submit", async (e)=>{
+    e.preventDefault();
+    const rating = Number(document.querySelector("input[name='rating']:checked")?.value || 0);
+    const comment = $("#comment").value?.trim() || "";
+    if (!rating) { alert("Please select rating."); return; }
+
+    try{
+      await fbApi.create({ request_id: Number(request_id), rating, comment });
+      // show modal
+      const m = $("#thankYouModal"); m?.classList.add("open");
+      $("#closeModalBtn")?.addEventListener("click", ()=>{ m?.classList.remove("open"); location.replace(`/pin`); });
+    }catch(err){
+      alert(err?.message || "Failed to submit feedback.");
+    }
+  });
+});
+</script>
+</body>
+</html>

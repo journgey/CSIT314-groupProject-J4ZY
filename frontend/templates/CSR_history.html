@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>CSR – Requests History</title>
+  <link rel="stylesheet" href="/static/css/theme.css" />
+  <link rel="stylesheet" href="/static/css/base.css" />
+  <link rel="stylesheet" href="/static/css/layout.css" />
+  <style>
+    .table th, .table td { padding: 8px 10px; text-align: left; vertical-align: top; }
+    tr:hover { background-color: #f8f8f8; cursor: pointer; }
+    .muted { color:#666; }
+    .period { line-height:1.4; white-space:nowrap; }
+  </style>
+</head>
+<body>
+  <div class="page container">
+    <div class="page-header">
+      <h2 class="page-title">Requests History</h2>
+      <div class="toolbar">
+        <button class="btn btn-outline" onclick="window.location.href='/csr'">← Back to Dashboard</button>
+      </div>
+    </div>
+
+    <section class="content card">
+      <h3>History</h3>
+      <table class="table" id="historyTable">
+        <thead>
+          <tr>
+            <th>Title</th>
+            <th style="width:160px;">Category</th>
+            <th style="width:140px;">Region</th>
+            <th style="width:140px;">District</th>
+            <th style="width:220px;">Period</th>
+            <th style="width:140px;">Feedback</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <div id="flash" class="muted" style="margin-top:8px;"></div>
+    </section>
+  </div>
+
+  <script>
+    // --------------- Minimal helpers ---------------
+    const esc = (s) => String(s ?? "").replace(/[&<>"']/g, m => ({
+      "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+    }[m]));
+
+    async function apiFetch(url, opts = {}) {
+      const res = await fetch(url, { credentials:"include", ...opts });
+      if (!res.ok) {
+        let msg = `HTTP ${res.status}`;
+        try {
+          const t = await res.text();
+          try { const j = JSON.parse(t); msg = j?.error || j?.message || msg; }
+          catch { msg = t || msg; }
+        } catch {}
+        throw new Error(`${url} → ${msg}`);
+      }
+      if (res.status === 204) return null;
+      const txt = await res.text();
+      return txt ? JSON.parse(txt) : null;
+    }
+    const GET = (u) => apiFetch(u);
+
+    function normalizeStatus(r) {
+      return String(r?.computed_status ?? r?.status ?? "").trim().toLowerCase();
+    }
+    function isCompleted(s) { return s === "completed"; }
+    function isExpired(s)   { return s === "expired"; }
+
+    function fmtDate(iso) {
+      if (!iso) return "";
+      const s = String(iso).replace("T"," ").trim();
+      const m = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ ](\d{2}):(\d{2}))?/);
+      if (!m) return s;
+      const [,Y,M,D,HH="00",MM="00"] = m;
+      return `${D}-${M}-${Y} ${HH}:${MM}`;
+    }
+    function periodHTML(r) {
+      const A = fmtDate(r.start_at);
+      const B = fmtDate(r.end_at);
+      const txt = (A && B) ? `${A} ~ ${B}` : (A || B || "-");
+      return `<span class="period">${esc(txt)}</span>`;
+    }
+
+    // --------------- Main logic ---------------
+    document.addEventListener("DOMContentLoaded", async () => {
+      const tbody = document.querySelector("#historyTable tbody");
+      const flash = document.getElementById("flash");
+
+      try {
+        flash.textContent = "Loading...";
+
+        // Auth guard for CSR
+        const me = await GET("/api/auth/me");
+        const role = String(me?.role || "").toLowerCase();
+        if (role !== "csr") { window.location.href = "/"; return; }
+
+        // Load lookups
+        const [regionsArr, categoriesRes] = await Promise.all([
+          GET("/api/address/regions"),
+          GET("/api/category/")
+        ]);
+        const regionsMap = {};
+        (regionsArr || []).forEach(x => { regionsMap[x.id] = x.name; });
+        const catsArr = Array.isArray(categoriesRes) ? categoriesRes : (categoriesRes?.items ?? []);
+        const categoriesMap = {};
+        (catsArr || []).forEach(x => { categoriesMap[x.id] = x.name; });
+
+        // District lookup (optional)
+        let districtsMap = {};
+        try {
+          const allDists = await GET("/api/address/districts");
+          (allDists || []).forEach(x => { districtsMap[x.id] = x.name; });
+        } catch {}
+
+        // Fetch CSR requests
+        const res = await GET(`/api/request?csr_id=${encodeURIComponent(me.id)}`);
+        const all = Array.isArray(res) ? res : (res?.items ?? []);
+        const history = all.filter(r => {
+          const s = normalizeStatus(r);
+          return isCompleted(s) || isExpired(s);
+        });
+
+        // Sort by end_at or created_at (desc)
+        history.sort((a,b)=>{
+          const A = (a.end_at || a.created_at || "");
+          const B = (b.end_at || b.created_at || "");
+          return (B > A) ? 1 : (B < A) ? -1 : 0;
+        });
+
+        if (!history.length) {
+          tbody.innerHTML = `<tr><td colspan="6" class="muted" style="text-align:center; padding:12px;">No history found.</td></tr>`;
+          flash.textContent = "";
+          return;
+        }
+
+        // Render rows
+        tbody.innerHTML = history.map(r => {
+          const id = r.id ?? "";
+          const title = (r.title && String(r.title).trim()) ? r.title : "(no title)";
+          const cat   = r.category_name ?? categoriesMap[r.category_id] ?? "-";
+          const reg   = r.region_name   ?? regionsMap[r.region_id] ?? "-";
+          const dist  = r.district_name ?? districtsMap[r.district_id] ?? "-";
+
+          // Determine feedback state
+          const hasFeedback = (r.feedback_rating != null) || (r.feedback_comment && String(r.feedback_comment).trim() !== "");
+          const fbText = hasFeedback ? "Given" : "Pending";
+
+          return `
+            <tr data-id="${id}">
+              <td>${esc(title)}</td>
+              <td>${esc(cat)}</td>
+              <td>${esc(reg)}</td>
+              <td>${esc(dist)}</td>
+              <td>${periodHTML(r)}</td>
+              <td>${fbText}</td>
+            </tr>
+          `;
+        }).join("");
+
+        // Row click → CSR view page
+        tbody.querySelectorAll("tr[data-id]").forEach(tr => {
+          tr.addEventListener("click", () => {
+            const id = tr.getAttribute("data-id");
+            if (id) window.location.href = `/csr/view_request?id=${encodeURIComponent(id)}`;
+          });
+        });
+
+        flash.textContent = "";
+      } catch (e) {
+        console.error(e);
+        flash.textContent = "Failed to load history.";
+        alert(e?.message || "Failed to load history.");
+      }
+    });
+  </script>
+</body>
+</html>

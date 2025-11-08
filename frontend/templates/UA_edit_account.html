@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Edit User</title>
+  <link rel="stylesheet" href="/static/css/theme.css" />
+  <link rel="stylesheet" href="/static/css/base.css" />
+  <link rel="stylesheet" href="/static/css/layout.css" />
+  <style>
+    .form-grid { display:grid; grid-template-columns:160px 1fr; gap:10px 12px; align-items:center; }
+    .actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:14px; }
+  </style>
+</head>
+<body>
+  <div class="container page">
+    <header class="page-header">
+      <h1 class="page-title">Edit User</h1>
+      <div class="toolbar">
+        <a href="/useradmin" class="btn btn-outline">← Back to User List</a>
+      </div>
+    </header>
+
+    <div class="card content">
+      <form id="f" novalidate>
+        <div class="form-grid">
+          <label for="email">Email</label>
+          <input id="email" class="input" readonly />
+
+          <label for="name">Name</label>
+          <input id="name" class="input" />
+
+          <label for="phone">Phone</label>
+          <input id="phone" class="input" />
+
+          <label for="status">Status</label>
+          <select id="status" class="input">
+            <option value="active">active</option>
+            <option value="inactive">inactive</option>
+            <option value="blocked">blocked</option>
+          </select>
+        </div>
+
+        <div class="actions">
+          <button id="saveBtn" class="btn btn-primary" type="submit">Save Changes</button>
+          <a class="btn btn-outline" href="/useradmin">Cancel</a>
+        </div>
+      </form>
+      <div id="msg" class="mt-3 muted"></div>
+    </div>
+  </div>
+
+  <script>
+  // --- Tiny HTTP layer (keeps previous semantics) ---
+  async function apiFetch(url, opts = {}) {
+    const res = await fetch(url, { credentials: "include", ...opts });
+    if (!res.ok) {
+      let msg = `HTTP ${res.status}`;
+      try {
+        const text = await res.text();
+        try { const j = JSON.parse(text); msg = j?.error || j?.message || msg; }
+        catch { msg = text || msg; }
+      } catch {}
+      throw new Error(`${url} → ${msg}`);
+    }
+    if (res.status === 204) return null;
+    const text = await res.text();
+    return text ? JSON.parse(text) : null;
+  }
+  const http = {
+    get: (url) => apiFetch(url),
+    put: (url, body) => apiFetch(url, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body ?? {})
+    })
+  };
+
+  // --- Auth guard (requires UserAdmin) ---
+  async function installAuthGuard(requiredRole = null) {
+    try {
+      const me = await http.get("/api/auth/me");
+      const role = String(me?.role || "");
+      const norm = (r) => {
+        const x = r.trim().toLowerCase();
+        if (x === "useradmin" || x === "ua" || x === "user_admin") return "UserAdmin";
+        if (x === "platformmanager" || x === "pm" || x === "platform_manager") return "PlatformManager";
+        if (x === "pin") return "PIN";
+        if (x === "csr") return "CSR";
+        return r;
+      };
+      if (!role) return location.replace("/");
+      if (requiredRole && norm(role) !== requiredRole) return location.replace("/");
+    } catch {
+      location.replace("/");
+    }
+  }
+
+  // --- Minimal forms helper (withPending) ---
+  function withPending(btnEl, fn) {
+    return async (...args) => {
+      const oldDisabled = btnEl?.disabled;
+      if (btnEl) btnEl.disabled = true;
+      try { return await fn(...args); }
+      finally { if (btnEl) btnEl.disabled = oldDisabled ?? false; }
+    };
+  }
+
+  // --- Accounts facade used in this page ---
+  const accountsApi = {
+    get: (id)      => http.get(`/api/account/${encodeURIComponent(id)}`),
+    update: (id,p) => http.put(`/api/account/${encodeURIComponent(id)}`, p),
+  };
+
+  // --- Small UI helpers ---
+  const $ = (s, root=document) => root.querySelector(s);
+  const setMsg = (t) => { const el = $("#msg"); if (el) el.textContent = t || ""; };
+
+  document.addEventListener("DOMContentLoaded", async () => {
+    await installAuthGuard("UserAdmin");
+
+    const id = new URLSearchParams(location.search).get("id");
+    const $email  = $("#email");
+    const $name   = $("#name");
+    const $phone  = $("#phone");
+    const $status = $("#status");
+    const $save   = $("#saveBtn");
+
+    // Load current account data
+    async function load() {
+      if (!id) { setMsg("Missing id."); return; }
+      try {
+        setMsg(`Loading #${id}...`);
+        const a = await accountsApi.get(id);
+        $email.value  = a?.email  || "";
+        $name.value   = a?.name   || "";
+        $phone.value  = a?.phone  || "";
+        $status.value = a?.status || "active";
+        setMsg("");
+      } catch (e) {
+        console.error(e);
+        setMsg("Not found or failed to load.");
+      }
+    }
+
+    // Save handler (PUT)
+    const submitSafely = withPending($save, async () => {
+      if (!id) { setMsg("Missing id."); return; }
+      const payload = {
+        name:  ($name.value || "").trim(),
+        phone: ($phone.value || "").trim(),
+        status: $status.value
+      };
+      try {
+        setMsg("Saving...");
+        await accountsApi.update(id, payload);
+        setMsg("Saved.");
+        location.href = "/useradmin";
+      } catch (e) {
+        console.error(e);
+        setMsg("Failed to save.");
+      }
+    });
+
+    $("#f").addEventListener("submit", (e) => {
+      e.preventDefault();
+      submitSafely();
+    });
+
+    await load();
+  });
+  </script>
+</body>
+</html>

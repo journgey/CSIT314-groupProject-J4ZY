@@ -41,24 +41,6 @@
 @media (max-width: 1024px) { .grid-3 { grid-template-columns: 1fr 1fr; } }
 @media (max-width: 720px)  { .grid-2, .grid-3 { grid-template-columns: 1fr; } }
 
-/* Navbar */
-.navbar {
-  position: sticky; top: 0; z-index: 10;
-  backdrop-filter: saturate(180%) blur(8px);
-  background: color-mix(in oklab, var(--color-bg) 75%, transparent);
-  border-bottom: 1px solid var(--color-border);
-}
-.navbar-inner {
-  display: flex; align-items: center; gap: var(--space-4);
-  height: 56px;
-}
-.navbar a {
-  padding: 8px 10px; border-radius: var(--radius-sm);
-}
-.navbar a[aria-current="page"] {
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-}
 
 /* Footer */
 .footer {
@@ -91,3 +73,99 @@
   display: grid; gap: var(--space-4);
 }
 .modal-actions { display: flex; gap: var(--space-3); justify-content: flex-end; }
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 16px;
+  margin-top: 12px;
+}
+.stat-card {
+  text-align: center;
+  padding: 12px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+}
+
+.stat-card h2 { font-size: 1.5rem; margin: 0; }
+.stat-card p { margin: 4px 0 0; font-size: 0.9rem; }
+.toolbar { display: flex; gap: 12px; }
+.toolbar button { flex: 1; padding: 12px 0; font-size: 1rem; }
+@media (max-width: 640px) { .toolbar { flex-direction: column; } }
+.section-header {
+  font-size: 1.3rem;
+  font-weight: 600;
+  margin-top: 24px;
+  margin-bottom: 8px;
+}
+.filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 0 16px;
+  flex-wrap: wrap;
+}
+.filter-bar label { font-weight: 500; }
+.filter-bar select {
+  padding: 6px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  font-size: 0.95rem;
+}
+.page-head {
+  display:flex; align-items:center; justify-content:space-between; gap:12px;
+}
+.right-group { display:flex; gap:12px; align-items:center; }
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 20px 40px;
+  margin-top: 16px;
+}
+
+@media (max-width: 768px) {
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.form-group label {
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: var(--color-text);
+}
+
+.input, select, textarea {
+  padding: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  font-size: 0.95rem;
+}
+
+textarea {
+  resize: vertical;
+  min-height: 80px;
+}
+
+.readonly-field {
+  padding: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-bg-light);
+  font-size: 0.95rem;
+}
+
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 24px;
+}

@@ -1,73 +1,76 @@
-from flask import Blueprint, request, jsonify, g
-from backend.db_session import get_db
-from backend.repositories.feedback_repository import FeedbackRepository
-from backend.services.feedback_service import FeedbackService
-from backend.auth import login_required, require_role
+from typing import Any, Dict, List
+from datetime import datetime, timezone
 
-feedback_bp = Blueprint("feedbacks_bp", __name__)
+class FeedbackController:
+    def __init__(self, repo):
+        self.repo = repo
 
-def _service() -> FeedbackService:
-    conn = get_db()
-    repo = FeedbackRepository(conn)
-    return FeedbackService(repo)
+    @staticmethod
+    def _to_utc_naive(s: str | None) -> datetime | None:
+        if not s:
+            return None
+        iso = s.replace("T", " ")
+        dt = datetime.fromisoformat(iso)
+        if dt.tzinfo is not None:  # aware => UTC로 맞추고 tzinfo 제거
+            dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+        # tzinfo가 None이면 DB가 UTC naive로 저장되어 있다고 가정
+        return dt    
 
-# ---------- PIN: create feedback (one-time, no edit) ----------
-@feedback_bp.route("/", methods=["POST"])
-@login_required
-@require_role("PIN")
-def create_feedback():
-    try:
-        payload = request.get_json(force=True) or {}
-        request_id = payload.get("request_id")
-        comment = payload.get("comment")
-        rating = payload.get("rating")
+    def create_feedback(self, *, request_id: int, pin_id: int, rating: int, comment: str) -> Dict[str, Any]:
+        comment = (comment or "").strip()
+        if not comment:
+            raise ValueError("Comment cannot be blank")
 
-        # Basic type checks for request_id and rating
-        if not isinstance(request_id, int):
-            return jsonify({"error": "request_id must be an integer"}), 400
         if not isinstance(rating, int):
-            return jsonify({"error": "rating must be an integer"}), 400
+            raise ValueError("Rating must be an integer")
+        if rating < 1 or rating > 5:
+            raise ValueError("Rating must be between 1 and 5")
 
-        result = _service().create_feedback(
-            request_id=request_id,
-            pin_id=g.current_user["id"],
-            comment=comment,
-            rating=rating,
-        )
-        return jsonify(result), 201
-    except PermissionError as e:
-        return jsonify({"error": str(e)}), 403
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 400
-    except Exception:
-        return jsonify({"error": "Internal server error"}), 500
+        req = self.repo.get_request_min(request_id)
+        if not req:
+            raise ValueError("Request not found")
+        if req["pin_id"] != pin_id:
+            raise PermissionError("Forbidden: not the owner of this request")
+        if req["csr_id"] is None:
+            raise ValueError("Feedback not allowed: request has no assigned CSR")
+        
+        start = self._to_utc_naive(req.get("start_at"))
+        end   = self._to_utc_naive(req.get("end_at"))
+        now   = datetime.utcnow()  # UTC naive
 
-# ---------- CSR/PIN: get feedback for a specific request (authz required) ----------
-@feedback_bp.route("/request/<int:request_id>", methods=["GET"])
-@login_required
-@require_role("PIN", "CSR")
-def get_feedback_for_request(request_id: int):
-    try:
-        result = _service().get_feedback_for_request_authorized(
-            request_id=request_id,
-            user_id=g.current_user["id"],
-            role=g.current_user.get("role"),
-        )
-        return jsonify(result), 200
-    except PermissionError as e:
-        return jsonify({"error": str(e)}), 403
-    except LookupError as e:
-        return jsonify({"error": str(e)}), 404
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 400
+        if not start:
+            raise ValueError("Feedback not allowed: request start time not set")
 
-# ---------- CSR: list all feedbacks in own history ----------
-@feedback_bp.route("/csr/history", methods=["GET"])
-@login_required
-@require_role("CSR")
-def list_feedback_for_csr():
-    try:
-        items = _service().list_feedback_for_csr(csr_id=g.current_user["id"])
-        return jsonify({"items": items}), 200
-    except Exception:
-        return jsonify({"error": "Internal server error"}), 500
+        if end is not None:
+            if end > now:
+                raise ValueError("Feedback not allowed: request has not ended yet")
+        else:
+            if start > now:
+                raise ValueError("Feedback not allowed: request is not started yet")
+
+        if req.get("feedback_comment") is not None or req.get("feedback_rating") is not None:
+            raise ValueError("Feedback already submitted and cannot be edited")
+
+        return self.repo.set_feedback(request_id=request_id, rating=rating, comment=comment)
+
+    def get_feedback_for_request_authorized(self, *, request_id: int, user_id: int, role: str) -> Dict[str, Any]:
+        req = self.repo.get_request_min(request_id)
+        if not req:
+            raise ValueError("Request not found")
+
+        if role == "PIN":
+            if req["pin_id"] != user_id:
+                raise PermissionError("Forbidden")
+        elif role == "CSR":
+            if req["csr_id"] != user_id:
+                raise PermissionError("Forbidden")
+        else:
+            raise PermissionError("Forbidden")
+
+        fb = self.repo.get_feedback_for_request(request_id)
+        if not fb:
+            raise LookupError("No feedback for this request")
+        return fb
+
+    def list_feedback_for_csr(self, *, csr_id: int) -> List[Dict[str, Any]]:
+        return self.repo.list_feedback_for_csr(csr_id)

@@ -199,8 +199,20 @@ def import_requests(conn: sqlite3.Connection, path: Path) -> int:
     payload_with_created = []
     payload_no_created = []
 
+    def to_int_or_zero(v):
+        # Treat None, "", "null", etc. as 0
+        if v is None:
+            return 0
+        try:
+            return int(v)
+        except Exception:
+            return 0
+
     for r in rows:
-        volunteers_json = normalize_volunteers(r.get("volunteers"))  # JSON text로 변환한다고 가정
+        volunteers_json = normalize_volunteers(r.get("volunteers"))
+
+        view_count = to_int_or_zero(r.get("view_count"))
+        shortlist_count = to_int_or_zero(r.get("shortlist_count"))
 
         base = (
             r.get("id"),
@@ -213,11 +225,13 @@ def import_requests(conn: sqlite3.Connection, path: Path) -> int:
             r.get("start_at"),
             r.get("end_at"),
             volunteers_json,
+            view_count,
+            shortlist_count,
             r.get("feedback_rating"),
             r.get("feedback_comment"),
             r.get("feedback_created_at"),
         )
-        
+
         if r.get("created_at") is not None:
             payload_with_created.append(base + (r["created_at"],))
         else:
@@ -226,17 +240,17 @@ def import_requests(conn: sqlite3.Connection, path: Path) -> int:
     sql_no_created = (
         "INSERT OR IGNORE INTO requests ("
         " id, pin_id, csr_id, category_id, district_id, title, description, "
-        " start_at, end_at, volunteers, "
+        " start_at, end_at, volunteers, view_count, shortlist_count, "
         " feedback_rating, feedback_comment, feedback_created_at"
-        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
     )
 
     sql_with_created = (
         "INSERT OR IGNORE INTO requests ("
         " id, pin_id, csr_id, category_id, district_id, title, description, "
-        " start_at, end_at, volunteers, "
+        " start_at, end_at, volunteers, view_count, shortlist_count, "
         " feedback_rating, feedback_comment, feedback_created_at, created_at"
-        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
     )
 
     cur = conn.cursor()
@@ -244,7 +258,6 @@ def import_requests(conn: sqlite3.Connection, path: Path) -> int:
         cur.executemany(sql_no_created, payload_no_created)
     if payload_with_created:
         cur.executemany(sql_with_created, payload_with_created)
-
     conn.commit()
     print(f"✅ requests: inserted (or ignored) {len(rows)} rows")
     return len(rows)

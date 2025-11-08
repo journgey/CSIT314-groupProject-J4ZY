@@ -1,45 +1,51 @@
 import re
-from flask import Blueprint, request, jsonify, current_app
-from backend.services.address_service import AddressService
+from typing import Dict, Any, Optional
 from backend.repositories.geo_repository import GeoRepository
-from backend.db_session import get_db
 
-addresses_bp = Blueprint("addresses", __name__)
-_POSTAL_RE = re.compile(r"^\d{6}$")
+class AddressController:
+    def __init__(self, repo: GeoRepository):
+        self.repo = repo
 
-def _svc() -> AddressService:
-    return AddressService(GeoRepository(get_db()))
+    def lookup(self, postal_code: str) -> Dict[str, Any]:
+        if not postal_code or not postal_code.strip():
+            return None
 
-@addresses_bp.post("/lookup")
-def lookup():
-    try:
-        data = request.get_json(silent=True) or {}
-    except Exception as e:
-        return jsonify({"error": "Invalid JSON body"}), 400
-    
-    postal = (data.get("postal_code") or "").strip()
-    if not postal:
-        return jsonify({"error": "postal_code is required"}), 400
-    if not _POSTAL_RE.match(postal):
-        return jsonify({"error": "postal_code must be 6 digits (e.g., 238801)"}), 400
+        ext = self.repo.fetch_external_by_postal(postal_code.strip())
+        if not ext:
+            return {"error": "postal code not found"}
 
-    try:
-        res = _svc().lookup(postal)
-        return jsonify(res), 200
-    except ValueError as ve:
-        # 예: "Postal code not found"
-        return jsonify({"error": str(ve)}), 400
-    except Exception as e:
-        current_app.logger.exception("lookup failed")
-        return jsonify({"error": "Address lookup failed"}), 500
+        lat = ext.get("lat")
+        lng = ext.get("lng")
+        addr = ext.get("address") or ""
 
-@addresses_bp.get("/regions")
-def regions():
-    repo = GeoRepository(get_db())
-    return jsonify(repo.list_regions()), 200
+        mapped = None
+        if lat is not None and lng is not None:
+            mapped = self.repo.resolve_region_district_by_point(lat, lng)
 
-@addresses_bp.get("/districts")
-def districts():
-    region_id = request.args.get("region_id", type=int)
-    repo = GeoRepository(get_db())
-    return jsonify(repo.list_districts(region_id)), 200
+        resp = {
+            "postal_code": postal_code,
+            "address": addr,
+            "lat": lat,
+            "lng": lng,
+            "planning_area": mapped.get("planning_area") if mapped else None,
+            "district_id": mapped.get("district_id") if mapped else None,
+            "district_name": mapped.get("district_name") if mapped else None,
+            "region_id": mapped.get("region_id") if mapped else None,
+            "region_name": mapped.get("region_name") if mapped else None,
+        }
+        return resp
+
+    def enrich_request_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        out = dict(payload)
+        postal = (out.get("postal_code") or "").strip()
+        need_region = out.get("region_id") in (None, "")
+        need_district = out.get("district_id") in (None, "")
+
+        if postal and (need_region or need_district or not out.get("address")):
+            looked = self.lookup(postal)
+            out.setdefault("region_id", looked.get("region_id"))
+            out.setdefault("district_id", looked.get("district_id"))
+            out.setdefault("address", looked.get("address"))
+            out.setdefault("lat", looked.get("lat"))
+            out.setdefault("lng", looked.get("lng"))
+        return out

@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Platform Manager – Homepage</title>
+  <link rel="stylesheet" href="/static/css/theme.css">
+  <link rel="stylesheet" href="/static/css/layout.css">
+  <link rel="stylesheet" href="/static/css/base.css">
+</head>
+<body>
+  <main class="container page">
+    <div class="page-header">
+      <h2 class="page-title">Platform Manager Homepage</h2>
+      <button id="logoutBtn" class="btn btn-outline">Logout</button>
+      <div class="toolbar">
+        <a class="btn btn-primary" href="/pm/gen_report">Generate Report</a>
+        <a class="btn btn-outline" href="/pm/categories">Manage Category</a>
+      </div>
+    </div>
+
+    <div id="flash" class="muted"></div>
+
+    <section class="content">
+      <div class="card">
+        <table class="table" id="request-table">
+          <thead>
+            <tr>
+              <th>Title</th>
+              <th>PIN Name</th>
+              <th>Created</th>
+              <th>Status</th>
+              <th>Views</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="request-tbody"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+<script>
+/* ------------------------- Minimal HTTP layer -------------------------
+   Keeps previous semantics: credentials included, JSON parsing, rich errors */
+async function apiFetch(url, opts = {}) {
+  const res = await fetch(url, { credentials: "include", ...opts });
+  if (!res.ok) {
+    let msg = `HTTP ${res.status}`;
+    try {
+      const text = await res.text();
+      try { const j = JSON.parse(text); msg = j?.error || j?.message || msg; }
+      catch { msg = text || msg; }
+    } catch {}
+    throw new Error(`${url} → ${msg}`);
+  }
+  if (res.status === 204) return null;
+  const text = await res.text();
+  return text ? JSON.parse(text) : null;
+}
+const http = {
+  get: (u) => apiFetch(u),
+  post: (u, b) => apiFetch(u, { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(b ?? {}) }),
+  del: (u) => apiFetch(u, { method:"DELETE" }),
+};
+
+/* ------------------------- Small UI helpers ------------------------- */
+const escapeHtml = (s) => String(s ?? "").replace(/[&<>"']/g, m => ({
+  "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"
+}[m]));
+function setFlash(msg) { const el = document.getElementById("flash"); if (el) el.textContent = msg || ""; }
+
+/* ------------------------- Role / Auth helpers ------------------------- */
+function normalizeRole(role) {
+  const r = String(role || "").trim().toLowerCase();
+  if (!r) return "";
+  if (r === "useradmin" || r === "ua" || r === "user_admin") return "UserAdmin";
+  if (r === "platformmanager" || r === "pm" || r === "platform_manager") return "PlatformManager";
+  if (r === "pin") return "PIN";
+  if (r === "csr") return "CSR";
+  return role;
+}
+async function installAuthGuard(requiredRole = null) {
+  try {
+    const me = await http.get("/api/auth/me");
+    const role = normalizeRole(me?.role);
+    if (!role) return location.replace("/");
+    if (requiredRole && role !== requiredRole) return location.replace("/");
+  } catch {
+    location.replace("/");
+  }
+}
+async function doLogout() { try { await http.post("/api/auth/logout", {}); } finally { location.replace("/"); } }
+
+/* ------------------------- Event delegation ------------------------- */
+function on(root, event, selector, handler) {
+  root.addEventListener(event, (e) => {
+    const el = e.target.closest(selector);
+    if (el && root.contains(el)) handler(e, el);
+  });
+}
+
+/* ------------------------- Confirm modal (async) ------------------------- */
+function showConfirmModal(message, onConfirm, onCancel) {
+  let modal = document.getElementById("sharedModal");
+  if (!modal) {
+    modal = document.createElement("div");
+    modal.id = "sharedModal";
+    modal.className = "modal";
+    modal.innerHTML = `
+      <div class="modal-content">
+        <p id="modalMessage"></p>
+        <div class="modal-buttons">
+          <button id="modalConfirm" class="btn btn-primary">Confirm</button>
+          <button id="modalCancel" class="btn btn-secondary">Cancel</button>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+
+    const style = document.createElement("style");
+    style.textContent = `
+      .modal { display:none; position:fixed; inset:0; background:rgba(0,0,0,.5);
+               justify-content:center; align-items:center; z-index:999; }
+      .modal-content { background:var(--color-surface, #fff); padding:20px; border-radius:8px; width:320px; }
+      .modal-buttons { display:flex; justify-content:space-around; margin-top:15px; }`;
+    document.head.appendChild(style);
+  }
+  document.getElementById("modalMessage").textContent = message;
+  modal.style.display = "flex";
+
+  const confirmBtn = document.getElementById("modalConfirm");
+  const cancelBtn  = document.getElementById("modalCancel");
+  const newConfirm = confirmBtn.cloneNode(true);
+  const newCancel  = cancelBtn.cloneNode(true);
+  confirmBtn.parentNode.replaceChild(newConfirm, confirmBtn);
+  cancelBtn.parentNode.replaceChild(newCancel,  cancelBtn);
+
+  newConfirm.addEventListener("click", () => { modal.style.display = "none"; onConfirm && onConfirm(); });
+  newCancel.addEventListener("click",  () => { modal.style.display = "none"; onCancel && onCancel(); });
+}
+function confirmAsync(message) {
+  return new Promise(resolve => showConfirmModal(message, () => resolve(true), () => resolve(false)));
+}
+
+/* ------------------------- Requests API facades ------------------------- */
+const requestsApi = {
+  list: async (query = {}) => {
+    const qs = Object.entries(query)
+      .filter(([,v]) => v !== undefined && v !== null && v !== "")
+      .map(([k,v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join("&");
+    const url = qs ? `/api/request?${qs}` : "/api/request";
+    const res = await http.get(url);
+    return Array.isArray(res) ? res : (res?.items ?? []);
+  },
+  get: (id) => http.get(`/api/request/${encodeURIComponent(id)}`),
+  remove: (id) => http.del(`/api/request/${encodeURIComponent(id)}`),
+};
+
+/* ------------------------- Row builder + table render ------------------------- */
+function fmtDateTimeDDMMYYYY_HHMM(iso) {
+  if (!iso) return "";
+  const s = String(iso).replace("T"," ").trim();
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})[ ](\d{2}):(\d{2})/);
+  if (!m) return s;
+  const [, yyyy, mm, dd, HH, MM] = m;
+  return `${dd}-${mm}-${yyyy} ${HH}:${MM}`;
+}
+
+function requestRow(r, { viewPathPrefix = "/pm/view_request" } = {}) {
+  const tr = document.createElement("tr");
+  tr.dataset.id = r.id;
+  tr.classList.add("clickable-row");
+
+  const pinName = r.pin_name || (r.pin_id != null ? `PIN #${r.pin_id}` : "");
+  const status  = r.computed_status ?? r.status ?? "";
+  const created = (fmtDateTimeDDMMYYYY_HHMM(r.created_at) || "").split(" ")[0];
+  const views   = parseInt(r.view_count, 10) || 0;
+
+  tr.innerHTML = `
+    <td>${escapeHtml(r.title || "")}</td>
+    <td>${escapeHtml(pinName)}</td>
+    <td>${escapeHtml(created)}</td>
+    <td>${escapeHtml(status)}</td>
+    <td>${views}</td>
+    <td><button class="btn btn-danger btn-sm" data-action="delete" data-id="${r.id}">Delete</button></td>
+  `;
+
+  tr.addEventListener("click", (e) => {
+    if (e.target.closest("button[data-action]")) return;
+    location.href = `${viewPathPrefix}?id=${encodeURIComponent(r.id)}`;
+  });
+  return tr;
+}
+
+async function renderRequestTable(tbody, { viewPathPrefix } = {}) {
+  setFlash("Loading...");
+  try {
+    const items = await requestsApi.list();
+    tbody.innerHTML = "";
+    (items || []).forEach(r => tbody.appendChild(requestRow(r, { viewPathPrefix })));
+    setFlash("");
+  } catch (err) {
+    console.error(err);
+    setFlash("Failed to load data.");
+  }
+}
+
+/* ------------------------- Page wiring ------------------------- */
+document.addEventListener("DOMContentLoaded", async () => {
+  await installAuthGuard("PlatformManager");
+
+  document.getElementById("logoutBtn")?.addEventListener("click", doLogout);
+
+  const tbody = document.getElementById("request-tbody");
+  await renderRequestTable(tbody, { viewPathPrefix: "/pm/view_request" });
+
+  on(tbody, "click", "button[data-action='delete']", async (e, btn) => {
+    const id = Number(btn.getAttribute("data-id"));
+    if (!Number.isInteger(id)) return;
+
+    const ok = await confirmAsync(
+      `Are you sure you want to delete request #${id}? This action cannot be undone.`
+    );
+    if (!ok) return;
+
+    try {
+      setFlash(`Deleting #${id}...`);
+      await requestsApi.remove(id);
+      document.querySelector(`tr[data-id='${id}']`)?.remove();
+      setFlash(`Deleted #${id}.`);
+    } catch (err) {
+      console.error(err);
+      setFlash(err?.message || "Delete failed.");
+    }
+  });
+});
+</script>
+</body>
+</html>

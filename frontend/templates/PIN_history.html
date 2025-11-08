@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>PIN – Requests History</title>
+  <link rel="stylesheet" href="/static/css/theme.css" />
+  <link rel="stylesheet" href="/static/css/base.css" />
+  <link rel="stylesheet" href="/static/css/layout.css" />
+  <style>
+
+    /* Filter bar */
+    .filter-bar {
+      display:flex; align-items:center; flex-wrap:wrap;
+      gap:10px; margin:16px 0;
+    }
+    .filter-bar label { font-weight:500; }
+    .filter-bar select, .filter-bar input[type="date"] {
+      padding:6px; border:1px solid var(--color-border,#ccc);
+      border-radius:6px; font-size:0.95rem;
+    }
+    .filter-bar .date-range { display:inline-flex; align-items:center; gap:6px; }
+    .filter-bar .btn { padding:6px 12px; font-size:0.9rem; }
+
+    .btn-muted { background:#e9ecef; color:#333; border:1px solid var(--color-border,#d0d7de); }
+    .muted { color: var(--color-muted); }
+  </style>
+</head>
+<body>
+  <div class="page container">
+    <div class="page-header">
+      <h2 class="page-title">Requests History</h2>
+      <div class="toolbar">
+        <button class="btn btn-outline" onclick="location.href='/pin'">← Back to Dashboard</button>
+        <button class="btn btn-primary" onclick="location.href='/pin/edit_request'">Add New Request</button>
+      </div>
+    </div>
+
+    <!-- Filter Bar -->
+    <section class="content card">
+      <div class="filter-bar">
+        <label for="regionFilter">Region:</label>
+        <select id="regionFilter"><option value="">All</option></select>
+
+        <label for="districtFilter">District:</label>
+        <select id="districtFilter"><option value="">All</option></select>
+
+        <label for="categoryFilter">Category:</label>
+        <select id="categoryFilter"><option value="">All</option></select>
+
+        <label>Date Created:</label>
+        <div class="date-range">
+          <input type="date" id="startDateFilter" />
+          <span>to</span>
+          <input type="date" id="endDateFilter" />
+        </div>
+
+        <button class="btn btn-sm btn-primary" id="applyFilters">Filter</button>
+        <button class="btn btn-sm btn-outline" id="resetFilters">Reset</button>
+      </div>
+    </section>
+
+    <!-- History Table -->
+    <section class="content card">
+      <h3>History</h3>
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Title</th>
+            <th style="width:160px;">Category</th>
+            <th style="width:140px;">Region</th>
+            <th style="width:140px;">District</th>
+            <th style="width:220px;">Period</th>
+            <th style="width:240px;">Feedback</th>
+          </tr>
+        </thead>
+        <tbody id="historyTable"></tbody>
+      </table>
+      <div id="flash" class="muted" style="margin-top:8px;"></div>
+    </section>
+  </div>
+
+<script>
+/* ===== Minimal standalone helpers (no utils.js) ===== */
+
+// JSON fetch with cookies
+async function apiFetch(url, opts={}) {
+  const res = await fetch(url, { credentials:"include", ...opts });
+  if (!res.ok) {
+    let msg = `HTTP ${res.status}`;
+    try { const t = await res.text(); try { const j = JSON.parse(t); msg = j?.error || j?.message || msg; } catch { msg = t || msg; } } catch {}
+    throw new Error(`${url} → ${msg}`);
+  }
+  if (res.status === 204) return null;
+  const txt = await res.text(); return txt ? JSON.parse(txt) : null;
+}
+const http = {
+  get:(u)=>apiFetch(u),
+  post:(u,b)=>apiFetch(u,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b??{})})
+};
+
+// Escape HTML to prevent XSS
+function escapeHtml(s){ return String(s??"").replace(/[&<>"']/g, m=>({"&":"&amp;","<":"&lt;","&gt;":"&gt;","\"":"&quot;","'":"&#39;"}[m])); }
+
+// Role guard
+function normalizeRole(r){
+  const x = String(r||"").trim().toLowerCase();
+  if (x==="pin") return "PIN";
+  if (x==="csr") return "CSR";
+  if (["pm","platformmanager"].includes(x)) return "PlatformManager";
+  if (["ua","useradmin"].includes(x)) return "UserAdmin";
+  return r||"";
+}
+async function installAuthGuard(reqRole=null){
+  try{
+    const me = await http.get("/api/auth/me");
+    const role = normalizeRole(me?.role);
+    if (!role) return location.replace("/");
+    if (reqRole && role!==reqRole) return location.replace("/");
+    return me;
+  }catch{ location.replace("/"); }
+}
+
+// Date formatting
+function ddmmyyyy_hhmm(iso){
+  if(!iso) return "";
+  const s = String(iso).replace("T"," ").trim();
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ ](\d{2}):(\d{2}))?/);
+  if(!m) return s;
+  const [,y,mo,d,hh="00",mm="00"]=m;
+  return `${d}-${mo}-${y} ${hh}:${mm}`;
+}
+function periodHTML(r){
+  const a=ddmmyyyy_hhmm(r.start_at), b=ddmmyyyy_hhmm(r.end_at);
+  return (a&&b)?`${a} ~ ${b}`:(a||b||"");
+}
+function normStatus(r){
+  return String(r?.computed_status ?? r?.status ?? "").trim().toLowerCase();
+}
+function inCreatedRange(r, fromISO, toISO){
+  const x = (r.created_at||"").slice(0,10); // YYYY-MM-DD
+  if (fromISO && (!x || x < fromISO)) return false;
+  if (toISO   && (!x || x > toISO))   return false;
+  return true;
+}
+
+/* ===== APIs ===== */
+const geoApi = {
+  regions:   ()=>http.get("/api/address/regions").then(rows => {
+                const map={}; (rows||[]).forEach(r=>map[r.id]=r.name); return map;
+              }),
+  districts: ()=>http.get("/api/address/districts").then(rows => {
+                const map={}; (rows||[]).forEach(r=>map[r.id]=r.name); return map;
+              })
+};
+const catApi = { list:()=>http.get("/api/category/").then(x=>Array.isArray(x)?x:(x?.items??[])) };
+const reqSearch = (q)=> http.get(`/api/request/search?${new URLSearchParams(q).toString()}`)
+                           .then(x=>Array.isArray(x)?x:(x?.items??[]));
+const fbApi = { getByRequest:(id)=>http.get(`/api/feedback/request/${encodeURIComponent(id)}`).catch(()=>null) };
+
+document.addEventListener("DOMContentLoaded", async () => {
+  const $ = (id)=>document.getElementById(id);
+  const $historyTable   = $("historyTable");
+  const $flash          = $("flash");
+  const $regionFilter   = $("regionFilter");
+  const $districtFilter = $("districtFilter");
+  const $categoryFilter = $("categoryFilter");
+  const $startDate      = $("startDateFilter");
+  const $endDate        = $("endDateFilter");
+  const $btnApply       = $("applyFilters");
+  const $btnReset       = $("resetFilters");
+
+  try{
+    // 1) Guard and identity
+    const me = await installAuthGuard("PIN"); if(!me) return;
+
+    // 2) Load dictionaries
+    const [regionsMap, districtsMap, categories] = await Promise.all([
+      geoApi.regions(), geoApi.districts(), catApi.list()
+    ]);
+    const categoriesMap = Object.fromEntries((categories||[]).map(c=>[c.id, c.name||`#${c.id}`]));
+
+    // fill selects
+    function fill(sel, map){
+      Object.entries(map).forEach(([id,name])=>{
+        const opt=document.createElement("option");
+        opt.value=id; opt.textContent=name; sel.appendChild(opt);
+      });
+    }
+    fill($regionFilter, regionsMap);
+    fill($districtFilter, districtsMap);
+    fill($categoryFilter, categoriesMap);
+
+    // 3) Fetch my completed/expired only (server-side filtering)
+    async function loadRows(){
+      const q = {
+        pin_id: me.id,
+        status: "completed,expired",
+        sort: "end_at",
+        order: "desc",
+        limit: 200
+      };
+      // apply optional created range on server if you later expose keys;
+      // for now keep client-side created range filter
+      return await reqSearch(q);
+    }
+
+    // 4) Enrich and render
+    function renderTable(rows){
+      $historyTable.innerHTML = rows.map(r=>{
+        const id    = r.id ?? "-";
+        const title = (r.title && String(r.title).trim()) ? r.title : "";
+        const cat   = r.category_name ?? categoriesMap[r.category_id] ?? "-";
+        const reg   = regionsMap[r.region_id] ?? "-";
+        const dis   = districtsMap[r.district_id] ?? "-";
+        const per   = periodHTML(r);
+        const status= normStatus(r);
+
+        let fbCell = "";
+        const hasFb = !!(r.feedback_rating || (r.feedback_comment && String(r.feedback_comment).trim()!==""));
+        if (hasFb) {
+          fbCell = `<button class="btn btn-sm btn-muted" data-action="view" data-id="${id}">View</button>`;
+        } else if (status === "expired") {
+          fbCell = `<button class="btn btn-sm btn-muted" data-action="view" data-id="${id}">Expired</button>`;
+        } else {
+          fbCell = `<button class="btn btn-sm btn-primary" data-action="add" data-id="${id}">Add Feedback</button>`;
+        }
+
+        return `
+          <tr>
+            <td>${escapeHtml(title)}</td>
+            <td>${escapeHtml(cat)}</td>
+            <td>${escapeHtml(reg)}</td>
+            <td>${escapeHtml(dis)}</td>
+            <td>${escapeHtml(per)}</td>
+            <td>${fbCell}</td>
+          </tr>`;
+      }).join("");
+
+      // delegate actions
+      $historyTable.querySelectorAll("button[data-action]").forEach(btn=>{
+        btn.addEventListener("click", ()=>{
+          const id=btn.getAttribute("data-id");
+          const act=btn.getAttribute("data-action");
+          if(!id) return;
+          if(act==="view"){
+            location.href=`/pin/view_request?id=${encodeURIComponent(id)}`;
+          }else if(act==="add"){
+            location.href=`/pin/feedback?request_id=${encodeURIComponent(id)}`;
+          }
+        });
+      });
+    }
+
+    // 5) Main flow
+    $flash.textContent="Loading...";
+    let base = await loadRows();
+
+    // Optionally enrich with feedback (when backend doesn't embed it)
+    await Promise.all(base.map(async r=>{
+      if (r.feedback_rating!=null || (r.feedback_comment && String(r.feedback_comment).trim()!=="")) return;
+      const fb = await fbApi.getByRequest(r.id);
+      if (fb){
+        r.feedback_rating  = fb.feedback_rating ?? fb.rating ?? null;
+        r.feedback_comment = fb.feedback_comment ?? fb.comment ?? null;
+      }
+    }));
+
+    function applyFilters(){
+      const rid = $regionFilter.value, did=$districtFilter.value, cid=$categoryFilter.value;
+      const from=$startDate.value, to=$endDate.value;
+      const filtered = base.filter(r=>{
+        if (rid && String(r.region_id)!==String(rid)) return false;
+        if (did && String(r.district_id)!==String(did)) return false;
+        if (cid && String(r.category_id)!==String(cid)) return false;
+        if (!inCreatedRange(r, from, to)) return false;
+        return true;
+      }).sort((a,b)=>{
+        const A=(a.created_at || a.end_at || "");
+        const B=(b.created_at || b.end_at || "");
+        return (B>A)?1:(B<A)?-1:0;
+      });
+
+      renderTable(filtered);
+      $flash.textContent = filtered.length ? "" : "No requests found for the selected filters.";
+    }
+
+    document.getElementById("applyFilters").addEventListener("click", applyFilters);
+    document.getElementById("resetFilters").addEventListener("click", ()=>{
+      $regionFilter.value=""; $districtFilter.value=""; $categoryFilter.value="";
+      $startDate.value=""; $endDate.value=""; applyFilters();
+    });
+
+    applyFilters();
+  }catch(e){
+    console.error(e);
+    document.getElementById("flash").textContent = "Failed to load history.";
+    alert(e.message || e);
+  }
+});
+</script>
+</body>
+</html>

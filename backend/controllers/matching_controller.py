@@ -1,41 +1,60 @@
-from flask import Blueprint, request, jsonify, g
-from backend.auth import login_required, require_role
-from backend.db_session import get_db
+from typing import List, Dict, Any, Optional
+import json
 from backend.repositories.requests_repository import RequestsRepository
 from backend.repositories.accounts_repository import AccountsRepository
-from backend.services.matching_service import MatchingService
+from backend.repositories.notifications_repository import NOTIF_MATCH_ASSIGNED, NotificationsRepository
 
-matching_bp = Blueprint("matching", __name__)  # url_prefix는 app.py에서 "/api"로 등록
+class MatchingController:
+    def __init__(self, requests_repo: RequestsRepository, accounts_repo: AccountsRepository, notifications_repo: NotificationsRepository):
+        self.requests_repo = requests_repo
+        self.accounts_repo = accounts_repo
+        self.notifications_repo = notifications_repo
 
-def _service():
-    conn = get_db()
-    return MatchingService(
-        requests_repo=RequestsRepository(conn),
-        accounts_repo=AccountsRepository(conn),
-    )
+    @staticmethod
+    def _normalize_volunteers(raw) -> List[Any]:
+        if not isinstance(raw, list):
+            return []
+        out = []
+        for v in raw:
+            if isinstance(v, str):
+                s = v.strip()
+                if s:
+                    out.append(s)
+            elif isinstance(v, int):
+                out.append(v)
+        return out
 
-@matching_bp.put("/requests/<int:request_id>/accept")
-@login_required
-@require_role("CSR")
-def accept_request(request_id: int):
-    try:
-        out = _service().accept_request(csr_id=g.current_user["id"], request_id=request_id)
-        return jsonify(out), 200
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 400
+    def accept_and_assign(self, *, request_id: int, csr_id: int, volunteers: List[int]) -> Dict[str, Any]:
+        # 1) Assign CSR – returns bool
+        success = self.requests_repo.try_assign_csr(request_id=request_id, csr_id=csr_id)
+        if not success:
+            return {"error": "Request not found or not assignable"}, 404
 
-@matching_bp.put("/requests/<int:request_id>/assign")
-@login_required
-@require_role("CSR")
-def assign_volunteers(request_id: int):
-    try:
-        payload = request.get_json(silent=True) or {}
-        volunteers = payload.get("volunteers", [])  # ["Alice","Bob"] or [101,102]
-        out = _service().assign_volunteers(
-            csr_id=g.current_user["id"],
+        # 2) Normalize and save volunteers as JSON string
+        norm_vols = self._normalize_volunteers(volunteers)
+        self.requests_repo.update_volunteers(
             request_id=request_id,
-            volunteers=volunteers,
+            volunteers_json=json.dumps(norm_vols)  # <-- repository expects volunteers_json
         )
-        return jsonify(out), 200
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 400
+
+        # 3) Reload request row for notification payload
+        req = self.requests_repo.get_request_by_id(request_id)
+        if not req:
+            return {"error": "Request not found after update"}, 404
+
+        # 4) Optional: load CSR name
+        csr = self.accounts_repo.get_account_by_id(csr_id) if hasattr(self.accounts_repo, "get_account_by_id") else None
+        csr_name = (csr or {}).get("name")
+
+        # 5) Create notification (receiver = PIN user)
+        self.notifications_repo.create(
+            user_id=req["pin_id"],
+            request_id=request_id,
+            actor_id=csr_id,
+            type=NOTIF_MATCH_ASSIGNED,
+            message=f"Your request '{req['title']}' has been accepted by {csr_name or f'CSR #{csr_id}'}."
+        )
+
+        # 6) Return updated request
+        out = self.requests_repo.get_request_by_id(request_id)
+        return out, 200

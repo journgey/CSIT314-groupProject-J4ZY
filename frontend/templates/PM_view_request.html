@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Request Details – Platform Manager</title>
+  <link rel="stylesheet" href="/static/css/theme.css">
+  <link rel="stylesheet" href="/static/css/base.css">
+  <link rel="stylesheet" href="/static/css/layout.css">
+  <style>
+    /* ----- match PIN_view_request layout ----- */
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(240px, 1fr));
+      gap: 14px 16px;
+    }
+    .form-group { display: flex; flex-direction: column; gap: 6px; }
+    label { font-weight:600; color: var(--color-text); }
+    .readonly-field {
+      padding: 8px;
+      border: 1px solid var(--color-border);
+      border-radius: 6px;
+      background: var(--color-bg-light);
+      font-size: 0.95rem;
+      min-height: 38px;
+      display: inline-block;
+    }
+    .stats { display:flex; gap:10px; margin: 16px 0 0; flex-wrap: wrap; }
+    .chip { display:inline-flex; align-items:center; gap:6px; padding:6px 10px; border-radius:999px; background: var(--color-bg-light); border:1px solid var(--color-border); font-size:0.9rem; }
+    .chip .num { font-weight:700; }
+
+    /* feedback block align with PIN */
+    .feedback-section { display:none; margin-top:24px; padding-top:16px; border-top:1px solid var(--color-border); }
+    .feedback-content { background:#f9f9f9; border-radius:8px; padding:12px; }
+
+    .form-actions { margin-top: 16px; display:flex; gap:12px; }
+  </style>
+</head>
+<body>
+  <main class="container page">
+    <div class="page-header">
+      <h2 class="page-title">View Request</h2>
+      <div class="toolbar">
+        <a class="btn btn-outline" href="/pm">← Back to Dashboard</a>
+      </div>
+    </div>
+
+    <div id="flash" class="muted"></div>
+
+    <section class="content card" id="requestDetail">
+      <!-- form-grid layout like PIN_view_request -->
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Request Title:</label>
+          <div id="title" class="readonly-field"></div>
+        </div>
+
+        <div class="form-group">
+          <label>Service Type (Category):</label>
+          <div id="category" class="readonly-field"></div>
+        </div>
+
+        <div class="form-group">
+          <label>Region:</label>
+          <div id="region" class="readonly-field"></div>
+        </div>
+
+        <div class="form-group">
+          <label>District:</label>
+          <div id="district" class="readonly-field"></div>
+        </div>
+
+        <div class="form-group">
+          <label>Date Needed</label>
+          <div id="date" class="readonly-field"></div>
+        </div>
+
+        <div class="form-group">
+          <label>Status:</label>
+          <div id="status" class="readonly-field"></div>
+        </div>
+
+        <div class="form-group">
+          <label>PIN:</label>
+          <div id="pinName" class="readonly-field" aria-live="polite"></div>
+        </div>
+
+        <div class="form-group">
+          <label>Posted At:</label>
+          <div id="createdAt" class="readonly-field"></div>
+        </div>
+
+        <!-- CSR / Volunteers occupy full width when present -->
+        <div class="form-group" style="grid-column: span 2;">
+          <label>CSR / Volunteers:</label>
+          <div id="csrVols" class="readonly-field" style="width:100%;"></div>
+        </div>
+
+        <!-- Description full width -->
+        <div class="form-group" style="grid-column: span 2;">
+          <label>Description:</label>
+          <div id="desc" class="readonly-field" style="white-space:pre-line; width:100%;"></div>
+        </div>
+      </div>
+
+      <!-- chips style like PIN_view_request -->
+      <div class="stats">
+        <span class="chip">Views: <span id="viewsCount" class="num">0</span></span>
+        <span class="chip">Shortlisted: <span id="shortlistCount" class="num">0</span></span>
+      </div>
+
+      <!-- feedback section (kept hidden until script fills) -->
+      <div class="feedback-section" id="feedbackSection">
+        <h4>Feedback</h4>
+        <div id="feedbackContent" class="feedback-content"></div>
+      </div>
+
+      <div class="form-actions">
+        <button id="deleteBtn" class="btn btn-danger">Delete Request</button>
+      </div>
+    </section>
+  </main>
+
+<script>
+/* ---------- HTTP ---------- */
+async function apiFetch(url, opts={}) {
+  const res = await fetch(url, { credentials:"include", ...opts });
+  if(!res.ok){
+    let msg=`HTTP ${res.status}`;
+    try{ const txt=await res.text(); try{ const j=JSON.parse(txt); msg=j?.error||j?.message||msg; }catch{ msg=txt||msg; } }catch{}
+    throw new Error(`${url} → ${msg}`);
+  }
+  if(res.status===204) return null;
+  const txt=await res.text();
+  return txt?JSON.parse(txt):null;
+}
+const http = {
+  get:(u)=>apiFetch(u),
+  del:(u)=>apiFetch(u,{method:"DELETE"}),
+  post:(u,b)=>apiFetch(u,{method:"POST",headers:{ "Content-Type":"application/json" },body:JSON.stringify(b??{})})
+};
+
+/* ---------- Helpers ---------- */
+function setFlash(t){ const el=document.getElementById("flash"); if(el) el.textContent=t||""; }
+function escapeHtml(s){ return String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[m])); }
+function ddmmyyyy_hhmm(iso){
+  if(!iso) return "";
+  const s=String(iso).replace("T"," ").trim();
+  const m=s.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ ](\d{2}):(\d{2}))?/);
+  if(!m) return s;
+  const [,yyyy,mm,dd,HH="00",MM="00"]=m;
+  return `${dd}-${mm}-${yyyy} ${HH}:${MM}`;
+}
+
+/* ---------- Auth ---------- */
+function normalizeRole(r){
+  const x=String(r||"").trim().toLowerCase();
+  if(!x) return "";
+  if(["useradmin","ua","user_admin"].includes(x)) return "UserAdmin";
+  if(["platformmanager","pm","platform_manager"].includes(x)) return "PlatformManager";
+  if(x==="pin") return "PIN";
+  if(x==="csr") return "CSR";
+  return r;
+}
+async function installAuthGuard(reqRole=null){
+  try{
+    const me = await http.get("/api/auth/me");
+    const role = normalizeRole(me?.role);
+    if(!role) return location.replace("/");
+    if(reqRole && role!==reqRole) return location.replace("/");
+  }catch{ location.replace("/"); }
+}
+
+/* ---------- Requests API ---------- */
+const requestsApi = {
+  get: (id)=>http.get(`/api/request/${encodeURIComponent(id)}`),
+  remove: (id)=>http.del(`/api/request/${encodeURIComponent(id)}`),
+  views: (id)=>http.get(`/api/request/${encodeURIComponent(id)}/views`),
+  shortlistCount: async (id)=>{
+    const data = await http.get(`/api/shortlist?request_id=${encodeURIComponent(id)}`);
+    const arr = Array.isArray(data)?data:(data?.items??[]);
+    return arr.length;
+  }
+};
+
+/* ---------- Confirm modal ---------- */
+function showConfirmModal(message, onConfirm, onCancel) {
+  let modal = document.getElementById("sharedModal");
+  if (!modal) {
+    modal = document.createElement("div");
+    modal.id = "sharedModal";
+    modal.className = "modal";
+    modal.innerHTML = `
+      <div class="modal-content">
+        <p id="modalMessage"></p>
+        <div class="modal-buttons">
+          <button id="modalConfirm" class="btn btn-primary">Confirm</button>
+          <button id="modalCancel" class="btn btn-secondary">Cancel</button>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+
+    const style = document.createElement("style");
+    style.textContent = `
+      .modal { display:none; position:fixed; inset:0; background:rgba(0,0,0,.5);
+               justify-content:center; align-items:center; z-index:999; }
+      .modal-content { background:var(--color-surface, #fff); padding:20px; border-radius:8px; width:320px; }
+      .modal-buttons { display:flex; justify-content:space-around; margin-top:15px; }`;
+    document.head.appendChild(style);
+  }
+  document.getElementById("modalMessage").textContent = message;
+  modal.style.display = "flex";
+
+  const confirmBtn = document.getElementById("modalConfirm");
+  const cancelBtn  = document.getElementById("modalCancel");
+  const newConfirm = confirmBtn.cloneNode(true);
+  const newCancel  = cancelBtn.cloneNode(true);
+  confirmBtn.parentNode.replaceChild(newConfirm, confirmBtn);
+  cancelBtn.parentNode.replaceChild(newCancel,  cancelBtn);
+
+  newConfirm.addEventListener("click", () => { modal.style.display = "none"; onConfirm && onConfirm(); });
+  newCancel.addEventListener("click",  () => { modal.style.display = "none"; onCancel && onCancel(); });
+}
+function confirmAsync(message){ return new Promise(res=>showConfirmModal(message,()=>res(true),()=>res(false))); }
+
+/* ---------- Page wiring ---------- */
+document.addEventListener("DOMContentLoaded", async () => {
+  await installAuthGuard("PlatformManager");
+
+  const id = new URLSearchParams(location.search).get("id");
+  if(!id){ alert("No request ID."); location.replace("/pm"); return; }
+
+  try {
+    setFlash(`Loading #${id}...`);
+    const r = await requestsApi.get(id);
+    if (!r) throw new Error("Request not found.");
+
+    // Basic fields
+    document.getElementById("title").textContent = r.title || "";
+    document.getElementById("category").textContent = r.category_name ?? r.category_id ?? "";
+    document.getElementById("region").textContent = r.region_name ?? r.region_id ?? "";
+    document.getElementById("district").textContent = r.district_name ?? r.district_id ?? "";
+    document.getElementById("desc").textContent = r.description || "No description provided.";
+    document.getElementById("pinName").textContent = r.pin_name ?? (r.pin_id ? `PIN #${r.pin_id}` : "");
+    document.getElementById("status").textContent = (r.computed_status ?? r.status ?? "");
+
+    // Period
+    const start = ddmmyyyy_hhmm(r.start_at);
+    const end   = ddmmyyyy_hhmm(r.end_at);
+    document.getElementById("date").textContent = (start && end) ? `${start} ~ ${end}` : (start || end || "");
+
+    // Created at
+    document.getElementById("createdAt").textContent = ddmmyyyy_hhmm(r.created_at);
+
+    // CSR/Volunteers
+    let csrVols = "—";
+    const status = (r.computed_status ?? r.status ?? "").toString().toLowerCase();
+    if (["accepted","completed"].includes(status)) {
+      const csr = r.csr_name || "";
+      let vols = "";
+      if (r.volunteer_names) vols = r.volunteer_names;
+      else if (Array.isArray(r.volunteers)) vols = r.volunteers.join(", ");
+      else if (r.volunteers_count) vols = `(${r.volunteers_count} volunteers)`;
+      const parts = [];
+      if (csr) parts.push(`CSR: ${escapeHtml(csr)}`);
+      if (vols) parts.push(`Volunteers: ${escapeHtml(vols)}`);
+      csrVols = parts.join("<br>") || "—";
+      document.getElementById("csrVols").innerHTML = csrVols;
+    } else {
+      document.getElementById("csrVols").textContent = csrVols;
+    }
+
+    // Stats
+    const views = typeof r.view_count === "number" ? r.view_count :
+              (typeof r.views === "number" ? r.views : 0);
+
+    const shorts = typeof r.shortlist_count === "number" ? r.shortlist_count :
+                  (typeof r.shortlisted_count === "number" ? r.shortlisted_count : 0);
+
+    document.getElementById("viewsCount").textContent = views;
+    document.getElementById("shortlistCount").textContent = shorts;
+
+    // Feedback section
+    if (r.feedback_rating || r.feedback_comment) {
+      const fbSec = document.getElementById("feedbackSection");
+      fbSec.style.display = "block";
+      document.getElementById("feedbackContent").innerHTML = `
+        <p><strong>Rating:</strong> ${r.feedback_rating ?? "–"}/5</p>
+        <p><strong>Comment:</strong><br>${escapeHtml(r.feedback_comment ?? "No comment")}</p>`;
+    }
+
+    setFlash("");
+  } catch (err) {
+    alert(err.message || "Failed to load request.");
+    location.replace("/pm");
+    return;
+  }
+
+  document.getElementById("deleteBtn").addEventListener("click", async () => {
+    const ok = await confirmAsync(`Are you sure you want to delete request #${id}? This action cannot be undone.`);
+    if (!ok) return;
+    try {
+      setFlash(`Deleting #${id}...`);
+      await requestsApi.remove(id);
+      alert("Request deleted.");
+      location.replace("/pm");
+    } catch (e) {
+      alert(e.message || "Failed to delete request.");
+    }
+  });
+});
+</script>
+</body>
+</html>

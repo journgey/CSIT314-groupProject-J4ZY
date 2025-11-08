@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>CSR – All Pending Requests</title>
+  <link rel="stylesheet" href="/static/css/theme.css" />
+  <link rel="stylesheet" href="/static/css/base.css" />
+  <link rel="stylesheet" href="/static/css/layout.css" />
+  <style>
+    .table th, .table td { padding: 8px 10px; text-align: left; vertical-align: top; }
+    tr:hover { background-color: #f8f8f8; }
+    .filter-bar { display:flex; align-items:center; flex-wrap:wrap; gap:10px; margin:16px 0; }
+    .filter-bar label { font-weight:500; }
+    .filter-bar select, .filter-bar input[type="date"], .filter-bar input[type="text"] {
+      padding:6px; border:1px solid var(--color-border,#ccc); border-radius:6px; font-size:0.95rem;
+    }
+    .filter-bar .date-range { display:inline-flex; align-items:center; gap:6px; }
+    .filter-bar .btn { padding:6px 12px; font-size:0.9rem; }
+    .filter-row { display: flex; align-items: center; gap: 10px; width: 100%; flex-wrap: wrap; }
+    .clickable { cursor:pointer; text-decoration:underline; }
+    .muted { color:#666; }
+  </style>
+</head>
+<body>
+  <div class="page container">
+    <div class="page-header">
+      <h2 class="page-title">All Pending Requests</h2>
+      <div class="toolbar">
+        <button class="btn btn-outline" onclick="window.location.href='/csr'">← Back to Dashboard</button>
+      </div>
+    </div>
+
+    <!-- Filters -->
+    <section class="content card">
+      <div class="filter-bar">
+        <label for="regionFilter">Region:</label>
+        <select id="regionFilter"><option value="">All</option></select>
+
+        <label for="districtFilter">District:</label>
+        <select id="districtFilter"><option value="">All</option></select>
+
+        <label for="categoryFilter">Category:</label>
+        <select id="categoryFilter"><option value="">All</option></select>
+
+        <div class="filter-row">
+          <label>Date Created:</label>
+          <div class="date-range">
+            <input type="date" id="startDateFilter" />
+            <span>to</span>
+            <input type="date" id="endDateFilter" />
+          </div>
+        </div>
+
+        <div class="filter-row">
+          <label for="keyword">Keyword:</label>
+          <input type="text" id="keyword" placeholder="Title contains..." />
+          <button class="btn btn-sm btn-primary" id="applyFilters">Filter</button>
+          <button class="btn btn-sm btn-outline" id="resetFilters">Reset</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Pending table -->
+    <section class="content card">
+      <h3>Pending</h3>
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Title</th>
+            <th style="width:160px;">Category</th>
+            <th style="width:140px;">Region</th>
+            <th style="width:140px;">District</th>
+            <th style="width:220px;">Period</th>
+          </tr>
+        </thead>
+        <tbody id="reqTable"></tbody>
+      </table>
+      <div id="flash" class="muted" style="margin-top:8px;"></div>
+    </section>
+  </div>
+
+  <script>
+    // ---------------- Core helpers (no external utils) ----------------
+    const $ = (id) => document.getElementById(id);
+    const esc = (s) => String(s ?? "").replace(/[&<>"']/g, m => ({
+      "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+    }[m]));
+
+    async function apiFetch(url, opts = {}) {
+      const res = await fetch(url, { credentials:"include", ...opts });
+      if (!res.ok) {
+        let msg = `HTTP ${res.status}`;
+        try { const t = await res.text(); try { const j = JSON.parse(t); msg = j?.error || j?.message || msg; } catch { msg = t || msg; } } catch {}
+        throw new Error(`${url} → ${msg}`);
+      }
+      if (res.status === 204) return null;
+      const txt = await res.text();
+      return txt ? JSON.parse(txt) : null;
+    }
+    const GET  = (u)   => apiFetch(u);
+    const POST = (u,b) => apiFetch(u, { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(b ?? {}) });
+
+    async function guardCSR() {
+      try {
+        const me = await GET("/api/auth/me");
+        const role = String(me?.role || "").toLowerCase();
+        if (role !== "csr") { window.location.href = "/"; return null; }
+        return me;
+      } catch { window.location.href = "/"; return null; }
+    }
+
+    function normalizeStatus(rec) {
+      return String(rec?.computed_status ?? rec?.status ?? "").trim().toLowerCase();
+    }
+    function fmtDate(iso) {
+      if (!iso) return "";
+      const s = String(iso).replace("T"," ").trim();
+      const m = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ ](\d{2}):(\d{2}))?/);
+      if (!m) return s;
+      const [,Y,M,D,HH="00",MM="00"] = m;
+      return `${D}-${M}-${Y} ${HH}:${MM}`;
+    }
+    function formatPeriod(r){
+      const A = fmtDate(r.start_at);
+      const B = fmtDate(r.end_at);
+      return (A && B) ? `${A} ~ ${B}` : (A || B || "-");
+    }
+    function sameOrEmpty(val, selected) { return !selected || String(val) === String(selected); }
+    function inDateRangeCreated(r, fromISO, toISO) {
+      const created = (r.created_at || "").slice(0,10);
+      if (fromISO && created < fromISO) return false;
+      if (toISO && created > toISO) return false;
+      return true;
+    }
+
+    // ---------------- Data loaders (standalone) ----------------
+    async function loadRegionsMap() {
+      const arr = await GET("/api/address/regions");
+      const map = {};
+      (arr || []).forEach(x => map[x.id] = x.name);
+      return map;
+    }
+    async function loadDistrictsMap() {
+      const arr = await GET("/api/address/districts");
+      const map = {};
+      (arr || []).forEach(x => map[x.id] = x.name);
+      return map;
+    }
+    async function loadCategoriesMap() {
+      const res = await GET("/api/category/");
+      const arr = Array.isArray(res) ? res : (res?.items ?? []);
+      const map = {};
+      (arr || []).forEach(x => map[x.id] = x.name);
+      return map;
+    }
+
+    async function fetchPendingViaSearch(params) {
+      const usp = new URLSearchParams();
+      Object.entries(params).forEach(([k, v]) => { if (v) usp.append(k, v); });
+      const url = `/api/request/search?${usp.toString()}`;
+      const res = await GET(url);
+      return Array.isArray(res) ? res : (res?.items ?? []);
+    }
+
+    // ---------------- Rendering & filtering ----------------
+    function renderTable(tbody, rows, maps) {
+      const { categoriesMap, regionsMap, districtsMap } = maps;
+      if (!rows.length) {
+        tbody.innerHTML = `<tr><td colspan="5" class="muted" style="text-align:center; padding:12px;">No pending requests found.</td></tr>`;
+        return;
+      }
+      tbody.innerHTML = rows.map(r => `
+        <tr>
+          <td class="clickable" data-id="${r.id ?? ""}">${esc(r.title || "(no title)")}</td>
+          <td>${esc(r.category_name ?? categoriesMap[r.category_id] ?? "-")}</td>
+          <td>${esc(regionsMap[r.region_id] ?? "-")}</td>
+          <td>${esc(districtsMap[r.district_id] ?? "-")}</td>
+          <td>${formatPeriod(r)}</td>
+        </tr>
+      `).join("");
+
+      tbody.querySelectorAll(".clickable").forEach(el => {
+        el.addEventListener("click", () => {
+          const id = el.getAttribute("data-id");
+          if (id) window.location.href = `/csr/view_request?id=${encodeURIComponent(id)}`;
+        });
+      });
+    }
+
+    function rebuildDistrictOptions(baseRows, selectedRegionId, districtsMap, $districtFilter) {
+      const keep = new Set();
+      baseRows.forEach(r => {
+        if (!selectedRegionId || String(r.region_id) === String(selectedRegionId)) {
+          if (r.district_id != null) keep.add(String(r.district_id));
+        }
+      });
+      $districtFilter.innerHTML = `<option value="">All</option>`;
+      Object.entries(districtsMap).forEach(([id, name]) => {
+        if (!selectedRegionId || keep.has(String(id))) {
+          const opt = document.createElement("option");
+          opt.value = id; opt.textContent = name;
+          $districtFilter.appendChild(opt);
+        }
+      });
+      if ($districtFilter.value && !keep.has(String($districtFilter.value))) {
+        $districtFilter.value = "";
+      }
+    }
+
+    function applyClientFilters(base, maps, els) {
+      const { $regionFilter, $districtFilter, $categoryFilter, $startDate, $endDate, $keyword, $flash } = els;
+
+      const kw      = ($keyword.value || "").trim().toLowerCase();
+      const fromISO = $startDate.value || "";
+      const toISO   = $endDate.value   || "";
+      const region  = $regionFilter.value || "";
+      const district= $districtFilter.value || "";
+      const cat     = $categoryFilter.value || "";
+
+      let rows = base.filter(r => {
+        const s = normalizeStatus(r);
+        return (s === "requested" || s === "pending");
+      });
+
+      rows = rows.filter(r =>
+        sameOrEmpty(r.region_id, region) &&
+        sameOrEmpty(r.district_id, district) &&
+        sameOrEmpty(r.category_id, cat)
+      );
+
+      rows = rows.filter(r => inDateRangeCreated(r, fromISO, toISO));
+
+      if (kw) rows = rows.filter(r => (r.title || "").toLowerCase().includes(kw));
+
+      rows.sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
+
+      renderTable($("reqTable"), rows, maps);
+      $flash.textContent = rows.length ? "" : "No pending requests found for the selected filters.";
+    }
+
+    // ---------------- Main ----------------
+    document.addEventListener("DOMContentLoaded", async () => {
+      const $tableBody      = $("reqTable");
+      const $flash          = $("flash");
+
+      const $regionFilter   = $("regionFilter");
+      const $districtFilter = $("districtFilter");
+      const $categoryFilter = $("categoryFilter");
+      const $startDate      = $("startDateFilter");
+      const $endDate        = $("endDateFilter");
+      const $keyword        = $("keyword");
+      const $btnApply       = $("applyFilters");
+      const $btnReset       = $("resetFilters");
+
+      try {
+        $flash.textContent = "Loading...";
+        const me = await guardCSR();
+        if (!me) return;
+
+        const [regionsMap, districtsMap, categoriesMap] = await Promise.all([
+          loadRegionsMap(), loadDistrictsMap(), loadCategoriesMap()
+        ]);
+
+        for (const [id, name] of Object.entries(regionsMap)) {
+          const o = document.createElement("option"); o.value = id; o.textContent = name;
+          $regionFilter.appendChild(o);
+        }
+        for (const [id, name] of Object.entries(districtsMap)) {
+          const o = document.createElement("option"); o.value = id; o.textContent = name;
+          $districtFilter.appendChild(o);
+        }
+        for (const [id, name] of Object.entries(categoriesMap)) {
+          const o = document.createElement("option"); o.value = id; o.textContent = name;
+          $categoryFilter.appendChild(o);
+        }
+
+        let base = await fetchPendingViaSearch({ limit: 200, sort: "created_at", order: "desc" });
+
+        $regionFilter.addEventListener("change", () => {
+          rebuildDistrictOptions(base, $regionFilter.value, districtsMap, $districtFilter);
+          $districtFilter.value = "";
+        });
+
+        $btnApply.addEventListener("click", async () => {
+          base = await fetchPendingViaSearch({
+            region_id:  $regionFilter.value || "",
+            district_id:$districtFilter.value || "",
+            category_id:$categoryFilter.value || "",
+            q:          ($keyword.value || "").trim(),
+            limit: 200, sort: "created_at", order: "desc"
+          });
+          applyClientFilters(base, { categoriesMap, regionsMap, districtsMap }, {
+            $regionFilter, $districtFilter, $categoryFilter, $startDate, $endDate, $keyword, $flash
+          });
+        });
+
+        $btnReset.addEventListener("click", async () => {
+          $regionFilter.value = "";
+          rebuildDistrictOptions(base, "", districtsMap, $districtFilter);
+          $districtFilter.value = "";
+          $categoryFilter.value = "";
+          $startDate.value = "";
+          $endDate.value = "";
+          $keyword.value = "";
+          base = await fetchPendingViaSearch({ limit:200, sort:"created_at", order:"desc" });
+          applyClientFilters(base, { categoriesMap, regionsMap, districtsMap }, {
+            $regionFilter, $districtFilter, $categoryFilter, $startDate, $endDate, $keyword, $flash
+          });
+        });
+
+        rebuildDistrictOptions(base, $regionFilter.value, districtsMap, $districtFilter);
+        applyClientFilters(base, { categoriesMap, regionsMap, districtsMap }, {
+          $regionFilter, $districtFilter, $categoryFilter, $startDate, $endDate, $keyword, $flash
+        });
+        $flash.textContent = "";
+      } catch (e) {
+        console.error(e);
+        $flash.textContent = "Failed to load pending requests. Please try again.";
+        alert(e?.message || "Failed to load.");
+      }
+    });
+  </script>
+</body>
+</html>

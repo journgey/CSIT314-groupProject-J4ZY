@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>PIN – View Request</title>
+  <link rel="stylesheet" href="/static/css/theme.css" />
+  <link rel="stylesheet" href="/static/css/layout.css" />
+  <link rel="stylesheet" href="/static/css/base.css" />
+  <style>
+    .stats { display:flex; gap:10px; margin: 8px 0 0; flex-wrap: wrap; }
+    .chip { display:inline-flex; align-items:center; gap:6px; padding:6px 10px; border-radius:999px; background: var(--color-bg-light); border:1px solid var(--color-border); font-size:0.9rem; }
+    .chip .num { font-weight:700; }
+    .readonly-field { padding: 8px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-bg-light); font-size: 0.95rem; display: inline-block; min-height: 38px; }
+    .input[disabled], select[disabled], textarea[disabled] { background: var(--color-bg-light); }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <main class="container page">
+    <div class="page-header">
+      <h2 class="page-title">View Request</h2>
+      <div class="toolbar">
+        <a id="backBtn" class="btn btn-outline" href="/pin">← Back</a>
+      </div>
+    </div>
+
+    <div id="flash" class="muted"></div>
+
+    <section class="card content">
+      <form id="viewRequestForm">
+        <div class="form-grid">
+          <div class="form-group"><label>Request Title:</label><input type="text" id="title" class="input" disabled></div>
+          <div class="form-group"><label>Service Type:</label><select id="category" class="input" disabled></select></div>
+
+          <div class="form-group"><label>Region:</label><select id="region" class="input" disabled></select></div>
+          <div class="form-group"><label>District:</label><select id="district" class="input" disabled></select></div>
+
+          <div class="form-group"><label>Status:</label><span id="status" class="readonly-field"></span></div>
+          <div class="form-group"><label>Date Needed</label><span id="date" class="readonly-field"></span></div>
+
+          <div class="form-group" id="csrGroup"><label>CSR</label><input id="csrName" class="input" disabled /></div>
+
+          <div class="form-group" id="volsGroup"><label>Volunteers</label><span id="volunteerNames" class="readonly-field" style="width:100%;" aria-live="polite"></span></div>
+
+          <div class="form-group" style="grid-column: span 2;"><label>Description:</label><textarea id="desc" class="input" disabled></textarea></div>
+        </div>
+
+        <div class="stats" style="margin-top:16px;">
+          <span class="chip">Views: <span id="viewsCount" class="num">0</span></span>
+          <span class="chip">Shortlisted: <span id="shortlistCount" class="num">0</span></span>
+        </div>
+
+        <div id="feedbackSection" class="content" style="margin-top:16px; border-top:1px solid var(--color-border); padding-top:12px; display:none;">
+          <h4>Feedback</h4>
+          <div id="feedbackContent" class="readonly-field" style="display:block; width:100%;"></div>
+        </div>
+      </form>
+    </section>
+  </main>
+
+<script>
+/* ---------------- mini utils (standalone) ---------------- */
+async function apiFetch(url, opts={}) {
+  const res = await fetch(url, { credentials:"include", ...opts });
+  if (!res.ok) {
+    let msg = `HTTP ${res.status}`;
+    try { const t = await res.text(); try { const j = JSON.parse(t); msg = j?.error || j?.message || msg; } catch { msg = t || msg; } } catch {}
+    throw new Error(`${url} → ${msg}`);
+  }
+  if (res.status === 204) return null;
+  const txt = await res.text();
+  return txt ? JSON.parse(txt) : null;
+}
+const http = {
+  get:(u)=>apiFetch(u),
+  post:(u,b)=>apiFetch(u,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b??{})})
+};
+const $ = (s,r=document)=>r.querySelector(s);
+
+// FIX: '>' 매핑 누락 보완
+function escapeHtml(s){
+  return String(s??"").replace(/[&<>"']/g, m=>({
+    "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+  }[m]));
+}
+
+function normalizeRole(r){
+  const x = String(r||"").trim().toLowerCase();
+  if (x==="pin") return "PIN";
+  if (x==="csr") return "CSR";
+  if (["pm","platformmanager"].includes(x)) return "PlatformManager";
+  if (["ua","useradmin"].includes(x)) return "UserAdmin";
+  return r||"";
+}
+
+async function installAuthGuard(reqRole=null){
+  try{
+    const me = await http.get("/api/auth/me");
+    const role = normalizeRole(me?.role);
+    if (!role) return location.replace("/");
+    if (reqRole && role!==reqRole) return location.replace("/");
+    return me;
+  }catch{ location.replace("/"); }
+}
+
+/* ============= Address line builder (utils 스타일, 확장형) ============= */
+/* 변경점: 다양한 키 대응 + 폴백(Region/District/Postal) + 강건한 join */
+function buildAddressLine(r){
+  // 1) 완성형 후보
+  const complete = [
+    r.address_text, r.full_address, r.address, r.addr, r.address_line, r.address1, r.address2,
+    r.addr_line, r.addr1
+  ].find(v => typeof v === "string" && v.trim());
+  if (complete) return complete.trim();
+
+  // 2) 파츠 조합 (가능한 많은 별칭 대응)
+  const street = r.street_name || r.street || r.road_name || r.road || r.street1;
+  const unit   = r.unit || r.unit_no || r.unit_number || r.apartment || r.flat;
+  const parts = [
+    r.block, street, r.building, unit
+  ].filter(v => typeof v === "string" && v.trim());
+  const partsJoined = parts.join(" ").replace(/\s+/g," ").trim();
+
+  // 3) 지역/구/우편(여러 키 대응) 폴백
+  const region   = r.region_name || r.region || r.region_title || r.regionName || "";
+  const district = r.district_name || r.district || r.district_title || r.districtName || "";
+  const postal   = r.postal_code || r.postal || r.zipcode || r.zip || r.postcode || "";
+
+  const rd = [region, district].filter(Boolean).join(" · ");
+  const fallback = postal ? `${rd}${rd ? " " : ""}(${postal})` : rd;
+
+  // 우선순위: partsJoined → fallback → ""
+  return partsJoined || fallback || "";
+}
+
+// 날짜 표시
+function ddmmyyyy_hhmm(iso){
+  if(!iso) return "";
+  const s = String(iso).replace("T"," ").trim();
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ ](\d{2}):(\d{2}))?/);
+  if(!m) return s;
+  const [,y,mo,d,hh="00",mm="00"] = m;
+  return `${d}-${mo}-${y} ${hh}:${mm}`;
+}
+function periodText(r){
+  const a = ddmmyyyy_hhmm(r.start_at);
+  const b = ddmmyyyy_hhmm(r.end_at);
+  return (a && b) ? `${a} ~ ${b}` : (a || b || "");
+}
+
+// API
+const catsApi = { list:()=>http.get("/api/category/").then(x=>Array.isArray(x)?x:(x?.items??[])) };
+const geoApi  = {
+  regions:   ()=>http.get("/api/address/regions").catch(()=>[]),
+  districts: (rid)=>http.get(`/api/address/districts?region_id=${encodeURIComponent(rid)}`).catch(()=>[])
+};
+const reqApi  = { get:(id)=>http.get(`/api/request/${encodeURIComponent(id)}`) };
+
+document.addEventListener("DOMContentLoaded", async () => {
+  await installAuthGuard("PIN");
+
+  const id = new URLSearchParams(location.search).get("id");
+  if(!id){ alert("No id"); return location.replace("/pin"); }
+
+  const [cats, regs] = await Promise.all([catsApi.list(), geoApi.regions()]);
+  $("#category").innerHTML = (cats||[]).map(c=>`<option value="${c.id}">${escapeHtml(c.name)}</option>`).join("");
+  $("#region").innerHTML   = (regs||[]).map(r=>`<option value="${r.id}">${escapeHtml(r.name)}</option>`).join("");
+
+  const r = await reqApi.get(id);
+  window.r = r; // 콘솔 확인용
+  if(!r){ alert("Request not found"); return location.replace("/pin"); }
+
+  // 기본 필드
+  $("#title").value = r.title || "";
+  $("#category").value = r.category_id ?? "";
+  $("#region").value   = r.region_id ?? "";
+  $("#status").textContent = r.computed_status || r.status || "";
+  $("#date").textContent   = periodText(r);
+
+  // ====== Description에 상세주소 자동 주입 (중복 방지) ======
+  (function(){
+    const addr = buildAddressLine(r);
+    let desc = typeof r.description === "string" ? r.description : "";
+    const hasMarker = /(^|\n)\s*Detailed address:/i.test(desc);
+    if (addr && !hasMarker) {
+      desc = (desc ? desc.trim() + "\n" : "") + `Detailed address: ${addr}`;
+    }
+    $("#desc").value = desc || "No description provided.";
+  })();
+
+  // Back 버튼
+  const statusLower = String(r.computed_status || r.status || "").trim().toLowerCase();
+  const backBtn = document.getElementById("backBtn");
+  if (["completed","expired"].includes(statusLower)) {
+    backBtn.textContent = "← Back to History";
+    backBtn.href = "/pin/history";
+  } else if (["pending","accepted"].includes(statusLower)) {
+    backBtn.textContent = "← Back to Dashboard";
+    backBtn.href = "/pin";
+  } else {
+    backBtn.textContent = "← Back";
+    backBtn.href = "/pin";
+  }
+
+  // District 목록
+  try{
+    const dists = await geoApi.districts(r.region_id);
+    $("#district").innerHTML = (dists||[]).map(d=>`<option value="${d.id}">${escapeHtml(d.name)}</option>`).join("");
+    $("#district").value = r.district_id ?? "";
+  }catch{}
+
+  // CSR
+  const csrName = r.csr_name || (r.csr_id ? `#${r.csr_id}` : "");
+  if (csrName) $("#csrName").value = csrName;
+  else $("#csrGroup")?.classList.add("hidden");
+
+  // Volunteers
+  const volsText = r.volunteer_names || (Array.isArray(r.volunteers) ? r.volunteers.join(", ") : "");
+  if (volsText) $("#volunteerNames").textContent = volsText;
+  else $("#volsGroup")?.classList.add("hidden");
+
+  // Feedback section
+  const hasFeedback = (r.feedback_rating != null) || (r.feedback_comment && String(r.feedback_comment).trim() !== "");
+  if (hasFeedback) {
+    const rating = (r.feedback_rating != null) ? `${r.feedback_rating}/5` : "–";
+    const comment = r.feedback_comment ? escapeHtml(r.feedback_comment) : "No comment";
+    $("#feedbackContent").innerHTML = `<div><strong>Rating:</strong> ${rating}</div><div style="margin-top:6px;"><strong>Comment:</strong><br>${comment}</div>`;
+    $("#feedbackSection").style.display = "block";
+  }
+
+  // 카운터
+  $("#viewsCount").textContent =
+    (typeof r.view_count === "number") ? r.view_count : (r.views ?? 0);
+  $("#shortlistCount").textContent =
+    (typeof r.shortlist_count === "number") ? r.shortlist_count :
+    (typeof r.shortlisted_count === "number") ? r.shortlisted_count : 0;
+});
+</script>
+</body>
+</html>

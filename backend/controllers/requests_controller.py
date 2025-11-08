@@ -1,103 +1,177 @@
-from flask import Blueprint, request, jsonify, g
-from backend.auth import login_required, require_role
-from backend.services.requests_service import RequestsService
-from backend.repositories.requests_repository import RequestsRepository
+from typing import Dict, Any, Optional, List
+from datetime import datetime
+import json
+
 from backend.db_session import get_db
+from backend.repositories.geo_repository import GeoRepository
+from backend.controllers.address_controller import AddressController
+from backend.controllers.notifications_controller import NotificationsController
+from backend.repositories.notifications_repository import NotificationsRepository
+from backend.repositories.accounts_repository import AccountsRepository
 
-# NOTE: url_prefix is set in app.py (e.g., "/api/requests")
-requests_bp = Blueprint("requests_bp", __name__)
 
-def _service() -> RequestsService:
-    repo = RequestsRepository(get_db())
-    return RequestsService(repo)
 
-# ----- Read -----
-@requests_bp.get("/")
-@login_required
-@require_role("PIN", "CSR", "PlatformManager")
-def list_requests():
-    """
-    Optional filters:
-      - status (pending|accepted|completed|expired)
-      - pin_id, csr_id, category_id, district_id
-    Source: v_requests_status (computed status)
-    """
-    svc = _service()
-    filters = {
-        "status": request.args.get("status"),
-        "pin_id": request.args.get("pin_id", type=int),
-        "csr_id": request.args.get("csr_id", type=int),
-        "category_id": request.args.get("category_id", type=int),
-        "district_id": request.args.get("district_id", type=int),
-    }
-    data = svc.list_requests({k: v for k, v in filters.items() if v is not None and v != ""})
-    return jsonify(data), 200
+class RequestsController:
+    def __init__(self, repository):
+        self.repository = repository
 
-@requests_bp.get("/<int:req_id>")
-@login_required
-@require_role("PIN", "CSR", "PlatformManager")
-def get_request(req_id: int):
-    svc = _service()
-    item = svc.get_request_by_id(req_id)
-    if not item:
-        return jsonify({"error": "Request not found"}), 404
-    return jsonify(item), 200
+    @staticmethod
+    def _serialize_volunteers(vols):
+        if vols is None:
+            return []
+        if isinstance(vols, list):
+            return vols
+        if isinstance(vols, str) and vols.strip():
+            return [int(x) for x in vols.split(",") if x.strip().isdigit()]
+        return []
 
-# ----- Create (PIN only) -----
-@requests_bp.post("/")
-@login_required
-@require_role("PIN")
-def create_request():
-    svc = _service()
-    payload = (request.get_json() or {})
-    try:
-        created = svc.create_request(
-            payload,
-            acting_user_id=g.current_user["id"],
-            acting_role=g.current_user["role"],
+    @staticmethod
+    def _parse_dt(s: Optional[str]) -> Optional[datetime]:
+        if not s:
+            return None
+        t = s.strip().replace("T", " ")
+        if len(t) == 16:
+            t = t + ":00"
+        return datetime.fromisoformat(t)
+
+    @staticmethod
+    def _assert_valid_period(
+        start_at_new: Optional[str],
+        end_at_new: Optional[str],
+        *,
+        start_at_old: Optional[str],
+        end_at_old: Optional[str],
+    ) -> None:
+        s = RequestsController._parse_dt(start_at_new) or RequestsController._parse_dt(start_at_old)
+        e = RequestsController._parse_dt(end_at_new) or RequestsController._parse_dt(end_at_old)
+        if s and e and e < s:
+            raise ValueError("end_at must be greater than or equal to start_at")
+
+    def get_request_by_id(self, req_id: int) -> Optional[Dict[str, Any]]:
+        item = self.repository.get_request_by_id(req_id)
+        if not item:
+            return None
+        try:
+            if self.repository.increment_view_count(req_id):
+                try:
+                    item["view_count"] = (item.get("view_count") or 0) + 1
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        return item
+
+    def list_requests(self, filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        return self.repository.list_requests(filters or {})
+
+    def create_request(
+        self,
+        payload: Dict[str, Any],
+        *,
+        acting_user_id: int,
+        acting_role: str,
+    ) -> Dict[str, Any]:
+        if (acting_role or "").upper() != "PIN":
+            raise PermissionError("Only PIN can create requests")
+
+        self._assert_valid_period(
+            payload.get("start_at"),
+            payload.get("end_at"),
+            start_at_old=None,
+            end_at_old=None,
         )
-        return jsonify(created), 201
-    except PermissionError as e:
-        return jsonify({"error": str(e)}), 403
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 400
 
-# ----- Update (PIN owner only) -----
-@requests_bp.put("/<int:req_id>")
-@login_required
-@require_role("PIN")
-def update_request(req_id: int):
-    svc = _service()
-    payload = (request.get_json() or {})
-    try:
-        updated = svc.update_request(
-            req_id,
-            payload,
-            acting_user_id=g.current_user["id"],
-            acting_role=g.current_user["role"],
-        )
-        if not updated:
-            return jsonify({"error": "Request not found"}), 404
-        return jsonify(updated), 200
-    except PermissionError as e:
-        return jsonify({"error": str(e)}), 403
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 400
+        payload = AddressController(GeoRepository(get_db())).enrich_request_payload(payload)
 
-# ----- Delete (PIN owner OR PlatformManager) -----
-@requests_bp.delete("/<int:req_id>")
-@login_required
-@require_role("PIN", "PlatformManager")
-def delete_request(req_id: int):
-    svc = _service()
-    try:
-        ok = svc.delete_request(
-            req_id,
-            acting_user_id=g.current_user["id"],
-            acting_role=g.current_user["role"],
+        data = dict(payload)
+        provided_pin_id = data.get("pin_id")
+        if provided_pin_id is None:
+            data["pin_id"] = acting_user_id
+        elif provided_pin_id != acting_user_id:
+            raise PermissionError("PIN can only create requests for themselves")
+
+        data["volunteers"] = json.dumps(self._serialize_volunteers(payload.get("volunteers")))
+
+        created = self.repository.create_request(
+            pin_id=data["pin_id"],
+            csr_id=data.get("csr_id"),
+            category_id=data["category_id"],
+            district_id=data["district_id"],
+            title=data["title"],
+            description=data.get("description"),
+            start_at=data.get("start_at"),
+            end_at=data.get("end_at"),
+            volunteers=data.get("volunteers"),
         )
-        if not ok:
-            return jsonify({"error": "Request not found"}), 404
-        return jsonify({"message": "Request deleted"}), 200
-    except PermissionError as e:
-        return jsonify({"error": str(e)}), 403
+        return created
+
+    def update_request(
+        self,
+        req_id: int,
+        payload: Dict[str, Any],
+        *,
+        acting_user_id: int,
+        acting_role: str,
+    ) -> Optional[Dict[str, Any]]:
+        if (acting_role or "").upper() != "PIN":
+            raise PermissionError("Only PIN can update requests")
+
+        current = self.repository.get_request_by_id(req_id)
+        if not current:
+            return None
+        if current.get("pin_id") != acting_user_id:
+            raise PermissionError("Forbidden: you can update only your own request")
+
+        self._assert_valid_period(
+            payload.get("start_at"),
+            payload.get("end_at"),
+            start_at_old=current.get("start_at"),
+            end_at_old=current.get("end_at"),
+        )
+
+        for forbidden in ("pin_id", "csr_id"):
+            if forbidden in payload:
+                raise ValueError(f"Field '{forbidden}' cannot be modified")
+
+        data = dict(payload)
+        if "volunteers" in data:
+            data["volunteers"] = json.dumps(self._serialize_volunteers(data.get("volunteers")))
+
+        return self.repository.update_request(req_id, **data)
+
+    def delete_request(
+        self,
+        req_id: int,
+        *,
+        acting_user_id: int,
+        acting_role: str,
+    ) -> bool:
+        current = self.repository.get_request_by_id(req_id)
+        if not current:
+            return False
+
+        role = (acting_role or "").upper()
+        if role == "PLATFORMMANAGER":
+            return self.repository.delete_request(req_id)
+
+        if role == "PIN":
+            if current.get("pin_id") != acting_user_id:
+                raise PermissionError("Forbidden: you can delete only your own request")
+            
+            csr_id = current.get("csr_id")
+            if csr_id is not None:
+                conn = get_db()
+                nsvc = NotificationsController(NotificationsRepository(conn))
+                actor_name = AccountsRepository(conn).get_account_by_id(acting_user_id)["name"]
+                nsvc.create_for_pin_deleted_request(
+                    csr_user_id=csr_id,
+                    actor_name=actor_name,
+                    request_title=current["title"],
+                    request_id=current["id"],
+                    actor_id=acting_user_id,
+                )
+
+            return self.repository.delete_request(req_id)
+
+        raise PermissionError("Forbidden: only owner PIN or PlatformManager can delete requests")

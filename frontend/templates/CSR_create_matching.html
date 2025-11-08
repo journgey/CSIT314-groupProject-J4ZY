@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>CSR – Match Volunteers</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="/static/css/theme.css" />
+  <link rel="stylesheet" href="/static/css/layout.css" />
+  <link rel="stylesheet" href="/static/css/base.css" />
+  <style>
+    .page .card h3 { margin-top: 0; }
+    .request-summary { display:grid; grid-template-columns: 1fr 1fr; gap:12px; }
+    .readonly-field { padding:8px; border:1px solid var(--color-border); border-radius:6px; background:var(--color-bg-light); display:block; min-height:38px; }
+    .vol-list { max-height: 360px; overflow:auto; border:1px solid var(--color-border); border-radius:8px; padding:8px; background:var(--color-bg); }
+    .vol-item { display:flex; align-items:center; gap:10px; padding:8px; border-bottom:1px dashed var(--color-border); }
+    .vol-item:last-child { border-bottom:none; }
+    .search-bar { display:flex; gap:8px; margin: 8px 0 12px; }
+    .muted-small { font-size:.9rem; color: var(--color-muted); }
+    .toolbar .btn + .btn { margin-left:8px; }
+    .stats { display:flex; gap:10px; flex-wrap:wrap; margin-top:6px; }
+    .chip { display:inline-flex; align-items:center; gap:6px; padding:6px 10px; border-radius:999px; background: var(--color-bg-light); border:1px solid var(--color-border); font-size:0.9rem; }
+    .chip .num { font-weight:700; }
+    .error-text { color: var(--color-danger, #b00020); }
+  </style>
+</head>
+<body>
+  <main class="container page">
+    <div class="page-header">
+      <h2 class="page-title">Assign Volunteers & Accept</h2>
+      <div class="toolbar">
+        <button class="btn btn-outline" id="backBtn" type="button">← Back</button>
+        <a class="btn btn-secondary" id="viewBtn" href="#">View Request</a>
+      </div>
+    </div>
+
+    <div id="flash" class="muted"></div>
+
+    <!-- Request summary -->
+    <section class="content card">
+      <h3>Request Summary</h3>
+      <div class="request-summary">
+        <div>
+          <label>Title</label>
+          <span id="reqTitle" class="readonly-field"></span>
+        </div>
+        <div>
+          <label>Status</label>
+          <span id="reqStatus" class="readonly-field"></span>
+        </div>
+        <div>
+          <label>PIN</label>
+          <span id="pinName" class="readonly-field"></span>
+        </div>
+        <div>
+          <label>Service Type</label>
+          <span id="catName" class="readonly-field"></span>
+        </div>
+        <div>
+          <label>Region</label>
+          <span id="regionName" class="readonly-field"></span>
+        </div>
+        <div>
+          <label>District</label>
+          <span id="districtName" class="readonly-field"></span>
+        </div>
+        <div style="grid-column: span 2;">
+          <label>Period</label>
+          <span id="period" class="readonly-field"></span>
+        </div>
+      </div>
+      <div class="stats">
+        <span class="chip">Views: <span id="viewsCount" class="num">0</span></span>
+        <span class="chip">Shortlisted: <span id="shortlistCount" class="num">0</span></span>
+      </div>
+    </section>
+
+    <!-- Volunteer selector -->
+    <section class="content card">
+      <h3>Volunteers in Your Company</h3>
+      <div class="search-bar">
+        <input id="q" class="input" placeholder="Search volunteers by name or email..." />
+        <button id="clearQ" class="btn btn-outline" type="button">Clear</button>
+        <span id="count" class="muted-small"></span>
+      </div>
+      <div id="volList" class="vol-list" aria-live="polite"></div>
+      <small class="muted">Only volunteers from your company are listed. You can select one or multiple volunteers.</small>
+    </section>
+
+    <!-- Submit -->
+    <section class="content card">
+      <div class="form-actions" style="display:flex; justify-content:space-between; align-items:center;">
+        <small id="hint" class="muted"></small>
+        <div>
+          <button type="button" class="btn btn-secondary" id="cancelBtn">Cancel</button>
+          <button type="button" class="btn btn-primary" id="submitBtn">Assign & Accept</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+  (function(){
+    // ------------ Minimal helpers (no external utils) ------------
+    const ENDPOINTS = {
+      AUTH_ME: "/api/auth/me",
+      REQUEST: "/api/request",              // GET /:id  and PUT /:id/accept (via matching_bp)
+      VOLUNTEER: "/api/volunteer"           // expects /?company_id=<id>
+    };
+
+    async function http(url, opts = {}) {
+      const res = await fetch(url, { credentials: "include", ...opts });
+      if (!res.ok) {
+        let msg = "HTTP " + res.status;
+        try {
+          const t = await res.text();
+          try { const j = JSON.parse(t); msg = j.error || j.message || msg; }
+          catch { msg = t || msg; }
+        } catch {}
+        throw new Error(msg);
+      }
+      if (res.status === 204) return null;
+      const text = await res.text();
+      return text ? JSON.parse(text) : null;
+    }
+    const GET  = (u)       => http(u);
+    const PUT  = (u, body) => http(u, { method:"PUT", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(body||{}) });
+
+    const $ = (sel, root=document) => root.querySelector(sel);
+    function setText(elOrSel, txt){
+      const el = (typeof elOrSel === "string") ? $(elOrSel) : elOrSel;
+      if (!el) return; el.textContent = (txt ?? "");
+    }
+    const flash = {
+      info(m){ setText("#flash", m||""); $("#flash")?.classList.remove("error-text"); },
+      error(m){ setText("#flash", m||""); $("#flash")?.classList.add("error-text"); },
+      clear(){ setText("#flash",""); $("#flash")?.classList.remove("error-text"); }
+    };
+    function getParam(name, search=location.search){ return new URLSearchParams(search).get(name); }  /* <-- added */
+
+    // Date formatting helpers
+    function ddmmyyyy_hhmm(iso){
+      if (!iso) return "";
+      const s = String(iso).replace("T"," ").trim();
+      const m = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ ](\d{2}):(\d{2}))?/);
+      if (!m) return s;
+      const [,Y,M,D,HH="00",MM="00"] = m;
+      return `${D}-${M}-${Y} ${HH}:${MM}`;
+    }
+    function formatPeriod(r){
+      const A = ddmmyyyy_hhmm(r?.start_at);
+      const B = ddmmyyyy_hhmm(r?.end_at);
+      return (A && B) ? `${A} ~ ${B}` : (A || B || "-");
+    }
+    function normalizeStatus(r){
+      return String(r?.computed_status ?? r?.status ?? "").toLowerCase();
+    }
+
+    // Auth guard (CSR only)
+    async function ensureCSR(){
+      try {
+        const me = await GET(ENDPOINTS.AUTH_ME);
+        if (!me?.role || String(me.role).toLowerCase() !== "csr") { location.href = "/"; return null; }
+        return me;
+      } catch {
+        location.href = "/"; return null;
+      }
+    }
+
+    // UI refs
+    const $reqTitle = $("#reqTitle");
+    const $reqStatus= $("#reqStatus");
+    const $pinName  = $("#pinName");
+    const $catName  = $("#catName");
+    const $region   = $("#regionName");
+    const $district = $("#districtName");
+    const $period   = $("#period");
+    const $views    = $("#viewsCount");
+    const $shorts   = $("#shortlistCount");
+
+    const $q        = $("#q");
+    const $clearQ   = $("#clearQ");
+    const $count    = $("#count");
+    const $volList  = $("#volList");
+
+    const $viewBtn  = $("#viewBtn");
+    const $submit   = $("#submitBtn");
+    const $cancel   = $("#cancelBtn");
+    const $back     = $("#backBtn");
+    const $hint     = $("#hint");
+
+    let ME = null;
+    let REQ = null;
+    let VOLUNTEERS = [];
+    let FILTERED = [];
+
+    function safeText(x){ return (x === 0 ? "0" : (x || "")); }
+
+    function renderRequestSummary(r){
+      $reqTitle.textContent   = safeText(r.title);
+      $reqStatus.textContent  = safeText(r.computed_status || r.status || "");
+      $pinName.textContent    = safeText(r.pin_name || (r.pin_id != null ? `PIN #${r.pin_id}` : "-"));
+      $catName.textContent    = safeText(r.category_name || (r.category_id != null ? `#${r.category_id}` : "-"));
+      $region.textContent     = safeText(r.region_name || (r.region_id != null ? `#${r.region_id}` : "-"));
+      $district.textContent   = safeText(r.district_name || (r.district_id != null ? `#${r.district_id}` : "-"));
+      $period.textContent     = safeText(formatPeriod(r));
+      $views.textContent      = r.view_count ?? 0;
+      $shorts.textContent     = r.shortlist_count ?? r.shortlisted_count ?? 0;
+    }
+
+    function volRowHTML(v){
+      const name  = v.name  || `Volunteer #${v.id}`;
+      const email = v.email || "";
+      const phone = v.phone || "";
+      return `
+        <label class="vol-item">
+          <input type="checkbox" class="vol-check" value="${String(v.id)}" />
+          <div>
+            <div><strong>${escapeHtml(name)}</strong></div>
+            ${email ? `<div class="muted-small">${escapeHtml(email)}</div>` : ""}
+            ${phone ? `<div class="muted-small">${escapeHtml(phone)}</div>` : ""}
+          </div>
+        </label>
+      `;
+    }
+    function escapeHtml(s){ return String(s ?? "").replace(/[&<>"']/g, m => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[m])); }
+    function renderVolList(list){
+      $volList.innerHTML = list.map(volRowHTML).join("") || `<div class="muted-small">No volunteers found.</div>`;
+      $count.textContent = list.length ? `${list.length} volunteers` : "";
+    }
+    function applyFilter(){
+      const q = ($q.value || "").trim().toLowerCase();
+      FILTERED = VOLUNTEERS.filter(v => {
+        if (!q) return true;
+        return (v.name  || "").toLowerCase().includes(q)
+            || (v.email || "").toLowerCase().includes(q)
+            || (v.phone || "").toLowerCase().includes(q);
+      });
+      renderVolList(FILTERED);
+    }
+    function selectedVolunteerIds(){
+      return Array.from(document.querySelectorAll(".vol-check:checked"))
+        .map(el => parseInt(el.value, 10))
+        .filter(n => Number.isFinite(n));
+    }
+
+    async function loadVolunteers(companyId){
+      const qs = new URLSearchParams({ company_id: String(companyId) }).toString();
+      const res = await GET(`${ENDPOINTS.VOLUNTEER}/?${qs}`);
+      const items = Array.isArray(res) ? res : (res?.items ?? []);
+      return items.filter(v => Number(v.company_id) === Number(companyId));
+    }
+
+    async function bootstrap(){
+      const me = await ensureCSR();
+      if (!me) return;
+      ME = me;
+
+      const reqId = parseInt(getParam("id") || "", 10);
+      if (!reqId) { flash.error("Invalid request id."); return; }
+      $viewBtn.href = `/csr/view_request?id=${encodeURIComponent(reqId)}`;
+
+      try {
+        flash.info("Loading...");
+        // Load request
+        REQ = await GET(`${ENDPOINTS.REQUEST}/${reqId}`);
+        renderRequestSummary(REQ);
+
+        // Load volunteers by company
+        if (!ME.company_id) { flash.error("Your account is not attached to a company."); return; }
+        VOLUNTEERS = await loadVolunteers(ME.company_id);
+        FILTERED = VOLUNTEERS.slice();
+        renderVolList(FILTERED);
+
+        // Guard by status
+        const st = normalizeStatus(REQ);
+        if (!(st === "requested" || st === "pending")) {
+          $submit.disabled = true;
+          $hint.textContent = `This request cannot be accepted (current status: ${st}).`;
+        } else {
+          $hint.textContent = "Select one or more volunteers and click Assign & Accept.";
+        }
+      } catch (e) {
+        console.error(e);
+        flash.error(e?.message || "Failed to load.");
+      } finally {
+        // keep or clear flash depending on preference
+      }
+    }
+
+    // Wire UI
+    $back?.addEventListener("click", () => history.back());
+    $cancel?.addEventListener("click", () => history.back());
+    $q.addEventListener("input", applyFilter);
+    $clearQ.addEventListener("click", () => { $q.value = ""; applyFilter(); });
+
+    // Accept & Assign → PUT /api/request/:id/accept { volunteers: [...] }
+    $submit.addEventListener("click", async (ev) => {
+      ev.preventDefault(); ev.stopPropagation();
+      try {
+        const reqId = parseInt(getParam("id") || "", 10);
+        if (!reqId) { flash.error("Invalid request id."); return; }
+
+        const volunteers = selectedVolunteerIds();
+        $submit.disabled = true;
+        $hint.textContent = "Assigning volunteers & accepting...";
+
+        await PUT(`${ENDPOINTS.REQUEST}/${reqId}/accept`, { volunteers });
+
+        // Success → CSR mypage
+        window.location.replace("/csr");
+      } catch (err) {
+        console.error(err);
+        flash.error(err?.message || "Failed to accept.");
+      } finally {
+        $submit.disabled = false;
+        $hint.textContent = "";
+      }
+    });
+
+    // Run when DOM is ready (once)
+    document.addEventListener("DOMContentLoaded", bootstrap, { once: true });
+  })();
+  </script>
+</body>
+</html>

@@ -1,83 +1,48 @@
-from flask import Blueprint, request, jsonify, g
-from backend.services.categories_service import CategoriesService
-from backend.repositories.categories_repository import CategoriesRepository
-from backend.db_session import get_db
-from backend.auth import login_required, require_role
+from typing import Dict, Any, Optional, List
+from backend.schemas.categories import Category 
 
-categories_bp = Blueprint("categories", __name__)
+class CategoriesController:
+    def __init__(self, repository):
+        self.repository = repository
 
-def _service():
-    repo = CategoriesRepository(get_db())
-    return CategoriesService(repo)
+    @staticmethod
+    def _require_pm(role: Optional[str]):
+        if role != "PlatformManager":
+            raise PermissionError("PlatformManager role required")
 
-@categories_bp.post("/")
-@login_required
-@require_role("PlatformManager")
-def create_category():
-    """Create a category."""
-    service = _service()
-    payload = request.get_json() or {}
-    try:
-        created = service().create_category(payload, acting_role=g.current_user.get("role"))
-        return jsonify(created), 201
-    except PermissionError as e:
-        return jsonify({"error": str(e)}), 403
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 400
+    def create_category(self, data: Dict[str, Any], *, acting_role: Optional[str] = None) -> Dict[str, Any]:
+        self._require_pm(acting_role)
+        cat = Category(**(data or {}))
 
-@categories_bp.get("/<int:category_id>")
-@login_required
-@require_role("PlatformManager")
-def get_category(category_id: int):
-    """Retrieve a single category by ID."""
-    service = _service()
-    try:
-        cat = service().get_category_by_id(category_id, acting_role=g.current_user.get("role"))
-        if not cat:
-            return jsonify({"error": "Category not found"}), 404
-        return jsonify(cat), 200
-    except PermissionError as e:
-        return jsonify({"error": str(e)}), 403
+        created = self.repository.create_category(
+            name=cat.name,
+            description=cat.description,
+        )
 
-@categories_bp.get("/")
-@login_required
-@require_role("PlatformManager")
-def list_categories():
-    """List all categories."""
-    service = _service()
-    try:
-        items = service().list_categories(acting_role=g.current_user.get("role"))
-        return jsonify(items), 200
-    except PermissionError as e:
-        return jsonify({"error": str(e)}), 403
+        fresh = self.repository.get_category_by_id(created["id"])
+        return fresh or created
 
-@categories_bp.put("/<int:category_id>")
-@login_required
-@require_role("PlatformManager")
-def update_category(category_id: int):
-    """Update a category by ID."""
-    service = _service()
-    payload = request.get_json() or {}
-    try:
-        updated = service().update_category(category_id, payload, acting_role=g.current_user.get("role"))
-        if not updated:
-            return jsonify({"error": "Category not found"}), 404
-        return jsonify(updated), 200
-    except PermissionError as e:
-        return jsonify({"error": str(e)}), 403
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 400
+    def get_category_by_id(self, category_id: int, *, acting_role: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        self._require_pm(acting_role)
+        return self.repository.get_category_by_id(category_id)
 
-@categories_bp.delete("/<int:category_id>")
-@login_required
-@require_role("PlatformManager")
-def delete_category(category_id: int):
-    """Delete a category by ID."""
-    service = _service()
-    try:
-        ok = service().delete_category(category_id, acting_role=g.current_user.get("role"))
-        if not ok:
-            return jsonify({"error": "Category not found"}), 404
-        return jsonify({"message": "Category deleted"}), 200
-    except PermissionError as e:
-        return jsonify({"error": str(e)}), 403
+    def list_categories(self) -> List[Dict[str, Any]]:
+        return self.repository.list_categories()
+
+    def update_category(self, category_id: int, data: Dict[str, Any], *, acting_role: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        self._require_pm(acting_role)
+        current = self.repository.get_category_by_id(category_id)
+        if not current:
+            return None
+        merged = {**current, **(data or {})}
+        Category(**merged)  
+        self.repository.update_category(category_id, **(data or {}))
+        return self.repository.get_category_by_id(category_id)
+
+    def delete_category(self, category_id: int, *, acting_role: Optional[str] = None) -> bool:
+        self._require_pm(acting_role)
+        try:
+            self.repository.delete_category(category_id)
+            return True
+        except ValueError:
+            return False

@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>User Admin – Account List</title>
+  <link rel="stylesheet" href="/static/css/theme.css" />
+  <link rel="stylesheet" href="/static/css/layout.css" />
+  <link rel="stylesheet" href="/static/css/base.css" />
+  <style>
+    .btn-sm { padding: 4px 8px; font-size: 0.9rem; }
+    .email-cell { max-width: 360px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .name-cell  { max-width: 260px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  </style>
+</head>
+<body>
+  <main class="container page">
+    <div class="page-header">
+      <h2 class="page-title">User Admin Homepage</h2>
+      <button id="logoutBtn" class="btn btn-outline">Logout</button>
+    </div>
+
+    <div id="flash" class="muted"></div>
+
+    <section class="content">
+      <div class="card">
+        <table class="table" id="tbl">
+          <thead>
+          <tr>
+            <th style="width:80px;">ID</th>
+            <th style="width:320px;">Email</th>
+            <th style="width:240px;">Name</th>
+            <th style="width:140px;">Role</th>
+            <th style="width:140px;">Status</th>
+            <th style="width:120px;">Action</th>
+          </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script>
+  document.addEventListener("DOMContentLoaded", async () => {
+
+    // ---------- Simple HTTP helper ----------
+    async function apiFetch(url, opts = {}) {
+      const res = await fetch(url, { credentials: "include", ...opts });
+      if (!res.ok) {
+        let msg = `HTTP ${res.status}`;
+        try {
+          const text = await res.text();
+          try { const j = JSON.parse(text); msg = j?.error || j?.message || msg; }
+          catch { msg = text || msg; }
+        } catch {}
+        throw new Error(msg);
+      }
+      if (res.status === 204) return null;
+      const text = await res.text();
+      return text ? JSON.parse(text) : null;
+    }
+
+    const http = {
+      get: (url) => apiFetch(url),
+      post: (url, body) => apiFetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body ?? {})
+      })
+    };
+
+    // ---------- Utility helpers ----------
+    const escapeHtml = (s) => String(s ?? "").replace(/[&<>"']/g, m => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;"
+    }[m]));
+
+    function setText(selOrEl, text) {
+      const el = typeof selOrEl === "string" ? document.querySelector(selOrEl) : selOrEl;
+      if (el) el.textContent = text ?? "";
+    }
+
+    // ---------- Role / Auth helpers ----------
+    function normalizeRole(role) {
+      const r = String(role || "").trim().toLowerCase();
+      if (!r) return "";
+      if (r === "useradmin" || r === "ua" || r === "user_admin") return "UserAdmin";
+      if (r === "platformmanager" || r === "pm" || r === "platform_manager") return "PlatformManager";
+      if (r === "pin") return "PIN";
+      if (r === "csr") return "CSR";
+      return role;
+    }
+
+    function redirectByRole(role) {
+      const map = {
+        UserAdmin: "/useradmin",
+        PlatformManager: "/pm",
+        PIN: "/pin",
+        CSR: "/csr",
+      };
+      const key = normalizeRole(role);
+      const target = map[key];
+      if (!target) return false;
+      window.location.href = target;
+      return true;
+    }
+
+    async function installAuthGuard(requiredRole = null) {
+      try {
+        const me = await http.get("/api/auth/me");
+        if (!me?.role) {
+          window.location.href = "/";
+          return;
+        }
+        if (requiredRole && normalizeRole(me.role) !== requiredRole) {
+          window.location.href = "/";
+        }
+      } catch {
+        window.location.href = "/";
+      }
+    }
+
+    async function logout() {
+      try { await http.post("/api/auth/logout", {}); } catch {}
+      window.location.href = "/";
+    }
+
+    // ---------- Accounts API ----------
+    const accountsApi = {
+      list: () => http.get("/api/account/"),
+    };
+
+    // ---------- Page logic ----------
+    const tbody = document.querySelector("#tbl tbody");
+    const flash = document.getElementById("flash");
+    const logoutBtn = document.getElementById("logoutBtn");
+
+    logoutBtn.addEventListener("click", logout);
+
+    // Check auth
+    await installAuthGuard("UserAdmin");
+
+    async function render() {
+      setText(flash, "Loading...");
+      try {
+        const items = await accountsApi.list();
+        tbody.innerHTML = (items || []).map(a => `
+          <tr data-id="${a.id}">
+            <td>${a.id}</td>
+            <td class="email-cell" title="${escapeHtml(a.email || "")}">${escapeHtml(a.email || "")}</td>
+            <td class="name-cell"  title="${escapeHtml(a.name  || "")}">${escapeHtml(a.name  || "")}</td>
+            <td>${escapeHtml(a.role   || "")}</td>
+            <td>${escapeHtml(a.status || "")}</td>
+            <td>
+              <button class="btn btn-outline btn-sm" data-action="edit" data-id="${a.id}">Edit</button>
+            </td>
+          </tr>
+        `).join("");
+        setText(flash, "");
+      } catch (err) {
+        console.error(err);
+        setText(flash, "Failed to load users.");
+      }
+    }
+
+    // Delegated event handler for edit buttons
+    tbody.addEventListener("click", (e) => {
+      const btn = e.target.closest("button[data-action='edit']");
+      if (!btn) return;
+      const id = Number(btn.getAttribute("data-id"));
+      if (!Number.isInteger(id)) return;
+      window.location.href = `/ua/edit_account?id=${id}`;
+    });
+
+    await render();
+  });
+  </script>
+</body>
+</html>

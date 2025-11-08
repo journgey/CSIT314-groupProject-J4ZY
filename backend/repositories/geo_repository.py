@@ -5,9 +5,7 @@ from urllib.parse import urlencode
 from typing import Optional, Dict, Any, List, Tuple
 from pathlib import Path
 
-# Path for local planning area polygon data
 PA_PATH = Path(__file__).resolve().parent.parent / "resources" / "planning_areas.json"
-
 
 class GeoRepository:
     def __init__(self, conn: Connection):
@@ -16,11 +14,7 @@ class GeoRepository:
         self._pa_polys: Dict[str, List[Tuple[float, float]]] = {}
         self._pa_bbox: Dict[str, Tuple[float, float, float, float]] = {}
 
-    # ---------- External Geocoding ----------
     def fetch_external_by_postal(self, postal_code: str) -> Optional[Dict[str, Any]]:
-        """
-        Fetch latitude, longitude, and address using OneMap Elastic Search API.
-        """
         try:
             url = "https://www.onemap.gov.sg/api/common/elastic/search?" + urlencode({
                 "searchVal": postal_code,
@@ -42,19 +36,12 @@ class GeoRepository:
         except Exception:
             return None
 
-    # ---------- Region / District ----------
     def list_regions(self) -> List[Dict[str, Any]]:
-        """
-        Return all regions for UI selection.
-        """
         cur = self.conn.cursor()
         cur.execute("SELECT id, name FROM regions ORDER BY id")
         return [{"id": r[0], "name": r[1]} for r in cur.fetchall()]
 
     def list_districts(self, region_id: Optional[int] = None) -> List[Dict[str, Any]]:
-        """
-        Return districts for a given region or all districts if region_id is None.
-        """
         cur = self.conn.cursor()
         if region_id:
             cur.execute("SELECT id, name, region_id FROM districts WHERE region_id=? ORDER BY id", (region_id,))
@@ -62,11 +49,7 @@ class GeoRepository:
             cur.execute("SELECT id, name, region_id FROM districts ORDER BY id")
         return [{"id": d[0], "name": d[1], "region_id": d[2]} for d in cur.fetchall()]
 
-    # ---------- Load Planning Area Polygons ----------
     def _ensure_pa_loaded(self) -> None:
-        """
-        Load planning area polygons from local JSON file.
-        """
         if self._pa_loaded:
             return
         if not PA_PATH.exists():
@@ -89,18 +72,12 @@ class GeoRepository:
 
     @staticmethod
     def _compute_bbox(poly: List[Tuple[float, float]]) -> Tuple[float, float, float, float]:
-        """
-        Compute bounding box (min/max lat/lng) for faster polygon lookup.
-        """
         lats = [p[0] for p in poly]
         lngs = [p[1] for p in poly]
         return (min(lats), min(lngs), max(lats), max(lngs))
 
     @staticmethod
     def _point_in_poly(lat: float, lng: float, poly: List[Tuple[float, float]]) -> bool:
-        """
-        Check if (lat,lng) lies inside the polygon using ray-casting algorithm.
-        """
         inside = False
         n = len(poly)
         if n < 3:
@@ -114,12 +91,7 @@ class GeoRepository:
                     inside = not inside
         return inside
 
-    # ---------- Coordinate-based District & Region Resolution ----------
     def resolve_region_district_by_point(self, lat: float, lng: float) -> Optional[Dict[str, Any]]:
-        """
-        Given (lat, lng), determine which planning area the point belongs to.
-        Then find the matching district and region from the database.
-        """
         self._ensure_pa_loaded()
         if not self._pa_polys:
             return None

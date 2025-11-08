@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>CSR – Manage Volunteers</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="/static/css/theme.css" />
+  <link rel="stylesheet" href="/static/css/base.css" />
+  <link rel="stylesheet" href="/static/css/layout.css" />
+  <style>
+    /* Layout helpers */
+    .grid { display:grid; grid-template-columns: 1fr 1fr; gap:16px; }
+    .form-inline { display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end; }
+    .w-200 { width:200px; }
+    .w-240 { width:240px; }
+    .mt-2 { margin-top:.5rem; } .mt-3 { margin-top:1rem; } .mt-4 { margin-top:1.5rem; }
+    .btn-sm { padding:4px 8px; font-size:.9rem; }
+
+    /* Modal base */
+    .modal { display:none; position:fixed; inset:0; background:rgba(0,0,0,.5);
+             justify-content:center; align-items:center; z-index:999; }
+    .modal.open { display:flex; }
+    .modal-card { background:#fff; color:var(--color-text,#222); border-radius:10px; padding:18px 20px; width: min(560px, 92vw); box-shadow:0 10px 28px rgba(0,0,0,.18); }
+    .modal-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+    .modal-title { font-size:1.1rem; font-weight:700; }
+    .modal-body { margin-top:10px; }
+    .modal-actions { display:flex; gap:10px; justify-content:flex-end; margin-top:16px; }
+
+    /* Fields */
+    .field { display:flex; flex-direction:column; gap:6px; }
+    .row-name { max-width: 260px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .muted { color:#666; }
+  </style>
+</head>
+<body>
+<main class="container page">
+  <div class="page-header">
+    <h2 class="page-title">Manage Volunteers</h2>
+    <div class="toolbar">
+      <a class="btn btn-outline" href="/csr">← Back to Dashboard</a>
+    </div>
+  </div>
+
+  <div id="flash" class="muted"></div>
+
+  <section class="card content">
+    <h3>Create New</h3>
+    <form id="createForm" class="form-inline" novalidate>
+      <div class="field">
+        <label for="newName">Name</label>
+        <input id="newName" class="input w-200" required />
+      </div>
+      <div class="field">
+        <label for="newEmail">Email</label>
+        <input id="newEmail" class="input w-240" type="email" required />
+      </div>
+      <div class="field">
+        <label for="newPhone">Phone</label>
+        <input id="newPhone" class="input w-200" placeholder="e.g., +65 9123 4567" />
+      </div>
+      <button class="btn btn-primary" id="createBtn" type="submit">Create</button>
+    </form>
+
+    <h3 class="mt-4">Volunteers in Your Company</h3>
+    <div class="form-inline">
+      <input id="q" class="input w-240" placeholder="Search by name/email/phone" />
+      <button id="clearQ" class="btn btn-outline" type="button">Clear</button>
+      <span id="count" class="muted"></span>
+    </div>
+
+    <table class="table mt-3" id="tbl">
+      <thead>
+      <tr>
+        <!-- No ID column per your preference -->
+        <th style="width:28%;">Name</th>
+        <th style="width:34%;">Email</th>
+        <th style="width:20%;">Phone</th>
+        <th style="width:18%;">Action</th>
+      </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </section>
+</main>
+
+<!-- Edit Modal -->
+<div id="editModal" class="modal" aria-hidden="true">
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="editTitle">
+    <div class="modal-header">
+      <div class="modal-title" id="editTitle">Edit Volunteer</div>
+      <button type="button" class="btn btn-outline btn-sm" data-close="edit">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="grid">
+        <div class="field">
+          <label for="editName">Name</label>
+          <input id="editName" class="input" />
+        </div>
+        <div class="field">
+          <label for="editEmail">Email</label>
+          <input id="editEmail" class="input" type="email" />
+        </div>
+        <div class="field">
+          <label for="editPhone">Phone</label>
+          <input id="editPhone" class="input" />
+        </div>
+      </div>
+      <input id="editId" type="hidden" />
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" data-close="edit">Cancel</button>
+      <button class="btn btn-primary" id="editSaveBtn">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Delete Confirm Modal -->
+<div id="deleteModal" class="modal" aria-hidden="true">
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="delTitle">
+    <div class="modal-header">
+      <div class="modal-title" id="delTitle">Delete Volunteer</div>
+      <button type="button" class="btn btn-outline btn-sm" data-close="delete">✕</button>
+    </div>
+    <div class="modal-body">
+      <p id="delMsg">Are you sure you want to delete this volunteer?</p>
+      <input id="delId" type="hidden" />
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" data-close="delete">Cancel</button>
+      <button class="btn btn-danger" id="deleteOkBtn">Delete</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ==============================
+   HTTP utilities (JSON + cookies)
+   ============================== */
+async function apiFetch(url, opts = {}) {
+  const res = await fetch(url, { credentials: "include", ...opts });
+  if (!res.ok) {
+    let msg = `HTTP ${res.status}`;
+    try { const t = await res.text(); try { const j = JSON.parse(t); msg = j?.error || j?.message || msg; } catch { msg = t || msg; } } catch {}
+    throw new Error(`${url} → ${msg}`);
+  }
+  if (res.status === 204) return null;
+  const txt = await res.text();
+  return txt ? JSON.parse(txt) : null;
+}
+const http = {
+  get:  (u)   => apiFetch(u),
+  post: (u,b) => apiFetch(u, { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(b ?? {}) }),
+  put:  (u,b) => apiFetch(u, { method:"PUT",  headers:{ "Content-Type":"application/json" }, body: JSON.stringify(b ?? {}) }),
+  del:  (u)   => apiFetch(u, { method:"DELETE" })
+};
+
+/* ==============================
+   Small helpers
+   ============================== */
+const $ = (s,r=document)=>r.querySelector(s);
+function setFlash(t){ const el=$("#flash"); if(el) el.textContent=t||""; }
+function escapeHtml(s){ return String(s??"").replace(/[&<>"']/g, m=>({"&":"&amp;","<":"&lt;","&gt;":"&gt;","\"":"&quot;","'":"&#39;"}[m])); }
+function normalizeRole(r){
+  const x=String(r||"").trim().toLowerCase();
+  if(x==="csr") return "CSR";
+  if(x==="pin") return "PIN";
+  if(["pm","platformmanager"].includes(x)) return "PlatformManager";
+  if(["ua","useradmin"].includes(x)) return "UserAdmin";
+  return r||"";
+}
+async function guardCSR(){
+  try{
+    const me = await http.get("/api/auth/me");
+    if (normalizeRole(me?.role) !== "CSR") { location.replace("/"); return null; }
+    return me; // must contain company_id
+  }catch{ location.replace("/"); return null; }
+}
+
+/* ==============================
+   Volunteers API facades (assumed)
+   ============================== */
+const volunteerApi = {
+  // list requires company_id (router enforces CSR + same company)
+  list: (company_id, q=null) => {
+    const qs = new URLSearchParams({ company_id: String(company_id) });
+    if (q) qs.set("q", q);
+    return http.get(`/api/volunteer/?${qs.toString()}`).then(x=>Array.isArray(x)?x:(x?.items??[]));
+  },
+  // create/update/remove assumed endpoints following project convention
+  create: (p) => http.post("/api/volunteer/", p),
+  update: (id, p) => http.put(`/api/volunteer/${encodeURIComponent(id)}`, p),
+  remove: (id) => http.del(`/api/volunteer/${encodeURIComponent(id)}`),
+  get: (id) => http.get(`/api/volunteer/${encodeURIComponent(id)}`),
+};
+
+/* ==============================
+   Row rendering
+   ============================== */
+function rowHTML(v){
+  const id    = v.id;
+  const name  = escapeHtml(v.name  || "");
+  const email = escapeHtml(v.email || "");
+  const phone = escapeHtml(v.phone || "");
+  return `
+    <tr data-id="${id}">
+      <td class="row-name" title="${name}">${name}</td>
+      <td title="${email}">${email}</td>
+      <td title="${phone}">${phone}</td>
+      <td>
+        <button class="btn btn-primary btn-sm" data-action="edit" data-id="${id}">Edit</button>
+        <button class="btn btn-danger  btn-sm" data-action="delete" data-id="${id}">Delete</button>
+      </td>
+    </tr>`;
+}
+
+/* ==============================
+   Page wiring
+   ============================== */
+document.addEventListener("DOMContentLoaded", async () => {
+  const me = await guardCSR();
+  if (!me) return;
+
+  const companyId = me.company_id;
+  const tbody   = $("#tbl tbody");
+  const q       = $("#q");
+  const clearQ  = $("#clearQ");
+  const countEl = $("#count");
+
+  const createForm = $("#createForm");
+  const createBtn  = $("#createBtn");
+  const newName    = $("#newName");
+  const newEmail   = $("#newEmail");
+  const newPhone   = $("#newPhone");
+
+  async function render() {
+    setFlash("Loading...");
+    try {
+      const items = await volunteerApi.list(companyId, (q.value||"").trim() || null);
+      tbody.innerHTML = (items||[]).map(rowHTML).join("");
+      countEl.textContent = items?.length ? `${items.length} volunteers` : "";
+      setFlash("");
+    } catch (e) {
+      console.error(e); setFlash("Failed to load volunteers.");
+    }
+  }
+
+  // Search
+  q.addEventListener("input", render);
+  clearQ.addEventListener("click", () => { q.value = ""; render(); });
+
+  // Create
+  createForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const name  = (newName.value || "").trim();
+    const email = (newEmail.value || "").trim();
+    const phone = (newPhone.value || "").trim();
+    if (!name || !email) { setFlash("Name and Email are required."); return; }
+    try {
+      createBtn.disabled = true; setFlash("Creating...");
+      // include company_id so backend can bind to CSR's company
+      await volunteerApi.create({ name, email, phone, company_id: companyId });
+      newName.value = ""; newEmail.value = ""; newPhone.value = "";
+      await render();
+      setFlash("Created.");
+    } catch (err) {
+      console.error(err); setFlash(err?.message || "Create failed.");
+    } finally {
+      createBtn.disabled = false;
+    }
+  });
+
+  // Delegated actions (Edit/Delete)
+  tbody.addEventListener("click", async (e) => {
+    const btn = e.target.closest("button[data-action]");
+    if (!btn) return;
+    const id = Number(btn.getAttribute("data-id"));
+    if (!Number.isInteger(id)) return;
+
+    // Edit
+    if (btn.dataset.action === "edit") {
+      try {
+        const row = btn.closest("tr");
+        $("#editId").value    = String(id);
+        $("#editName").value  = row.children[0].textContent.trim();
+        $("#editEmail").value = row.children[1].textContent.trim();
+        $("#editPhone").value = row.children[2].textContent.trim();
+        openModal("#editModal");
+      } catch (err) {
+        console.error(err); setFlash("Failed to open edit dialog.");
+      }
+      return;
+    }
+
+    // Delete
+    if (btn.dataset.action === "delete") {
+      $("#delId").value = String(id);
+      $("#delMsg").textContent = "Are you sure you want to delete this volunteer?";
+      openModal("#deleteModal");
+      return;
+    }
+  });
+
+  // Modal helpers
+  function openModal(id){ const m=$(id); if(m){ m.classList.add("open"); m.setAttribute("aria-hidden","false"); } }
+  function closeModal(id){ const m=$(id); if(m){ m.classList.remove("open"); m.setAttribute("aria-hidden","true"); } }
+  document.body.addEventListener("click", (e)=>{
+    const c1 = e.target.closest("[data-close='edit']");   if (c1) closeModal("#editModal");
+    const c2 = e.target.closest("[data-close='delete']"); if (c2) closeModal("#deleteModal");
+  });
+
+  // Edit save
+  $("#editSaveBtn").addEventListener("click", async () => {
+    const id    = Number($("#editId").value);
+    const name  = ($("#editName").value  || "").trim();
+    const email = ($("#editEmail").value || "").trim();
+    const phone = ($("#editPhone").value || "").trim();
+    if (!name || !email) { setFlash("Name and Email are required."); return; }
+    try {
+      $("#editSaveBtn").disabled = true; setFlash(`Saving...`);
+      await volunteerApi.update(id, { name, email, phone, company_id: companyId });
+      closeModal("#editModal");
+      await render();
+      setFlash("Saved.");
+    } catch (err) {
+      console.error(err); setFlash(err?.message || "Save failed.");
+    } finally {
+      $("#editSaveBtn").disabled = false;
+    }
+  });
+
+  // Delete confirm
+  $("#deleteOkBtn").addEventListener("click", async () => {
+    const id = Number($("#delId").value);
+    try {
+      $("#deleteOkBtn").disabled = true; setFlash("Deleting...");
+      await volunteerApi.remove(id);
+      closeModal("#deleteModal");
+      document.querySelector(`tr[data-id="${id}"]`)?.remove();
+      setFlash("Deleted.");
+      await render();
+    } catch (err) {
+      console.error(err); setFlash(err?.message || "Delete failed.");
+    } finally {
+      $("#deleteOkBtn").disabled = false;
+    }
+  });
+
+  await render();
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>PIN – Request Editor</title>
+  <link rel="stylesheet" href="/static/css/theme.css" />
+  <link rel="stylesheet" href="/static/css/layout.css" />
+  <link rel="stylesheet" href="/static/css/base.css" />
+  <script src="/static/js/utils.js"></script>
+  <style>
+    /* Modal */
+    .modal { display:none; position:fixed; inset:0; z-index:1000; background:rgba(0,0,0,0.45); justify-content:center; align-items:center; }
+    .modal-content { background:var(--color-surface); padding:18px 20px; border-radius:var(--radius-lg); width:min(420px,92vw); box-shadow:var(--shadow-lg); }
+    .modal.open { display:flex; }
+
+    /* Inputs / readonly blocks */
+    .input-group { display:flex; gap:8px; align-items:center; }
+    .btn-lookup { display:inline-flex; align-items:center; gap:6px; }
+    .readonly-field { padding:8px; border:1px solid var(--color-border); border-radius:6px; background:var(--color-bg-light); display:inline-block; min-height:38px; width:100%; }
+    .hidden { display:none !important; }
+  </style>
+</head>
+<body>
+  <main class="container page">
+    <div class="page-header">
+      <h2 class="page-title" id="pageTitle">Add New Request</h2>
+      <div class="toolbar">
+        <a class="btn btn-outline" href="/pin">← Back to Dashboard</a>
+      </div>
+    </div>
+
+    <div id="flash" class="muted"></div>
+
+    <section class="content card">
+      <form id="editRequestForm" novalidate>
+        <div class="form-grid">
+          <div class="form-group">
+            <label>Title</label>
+            <input id="title" class="input" required />
+          </div>
+
+          <div class="form-group">
+            <label>Category</label>
+            <select id="category" class="input"></select>
+          </div>
+
+          <div class="form-group">
+            <label>Postal Code</label>
+            <div class="input-group">
+              <input id="postal" class="input" maxlength="6" placeholder="e.g., 238801" />
+              <button id="btn-lookup" type="button" class="btn btn-secondary btn-lookup">
+                <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M10 18a8 8 0 1 1 5.3-14L21 9.7 19.6 11l-2.3-2.3A8 8 0 0 1 10 18z" fill="currentColor"/>
+                </svg>
+                <span>Lookup</span>
+              </button>
+            </div>
+            <small id="postal-hint" class="muted"></small>
+          </div>
+
+          <div class="form-group">
+            <label></label>
+          </div>
+
+          <div class="form-group">
+            <label>Region</label>
+            <select id="region" class="input"></select>
+          </div>
+
+          <div class="form-group">
+            <label>District</label>
+            <select id="district" class="input"></select>
+          </div>
+
+          <div class="form-group">
+            <label>Start</label>
+            <input type="date" id="start_date" class="input" />
+            <input type="time" id="start_time" class="input" value="09:00" />
+          </div>
+
+          <div class="form-group">
+            <label>End</label>
+            <input type="date" id="end_date" class="input" />
+            <input type="time" id="end_time" class="input" value="09:00" />
+          </div>
+
+          <div class="form-group hidden" id="csrGroup"><label>CSR</label><input id="csrName" class="readonly-field" disabled /></div>
+          <div class="form-group hidden" id="volsGroup"><label>Volunteers</label><span id="volunteerNames" class="readonly-field" style="width:100%;" aria-live="polite"></span></div>
+
+          <div class="form-group" style="grid-column:span 2;">
+            <label>Description</label>
+            <textarea id="desc" class="input" rows="4" placeholder="Detailed address will be filled after Lookup."></textarea>
+          </div>
+        </div>
+
+        <div class="form-actions" style="margin-top:16px;">
+          <button type="submit" id="submitBtn" class="btn btn-primary">Add Request</button>
+          <button type="button" id="deleteBtn" class="btn btn-danger">Delete</button>
+        </div>
+      </form>
+    </section>
+  </main>
+
+  <!-- Shared confirm modal -->
+  <div id="sharedModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="modalMessage">
+    <div class="modal-content">
+      <p id="modalMessage"></p>
+      <div class="modal-actions">
+        <button id="modalConfirm" class="btn btn-primary" type="button">Confirm</button>
+        <button id="modalCancel" class="btn btn-secondary" type="button">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Local status normalizer (avoid relying on utils.status)
+    function statusNorm(r) {
+      return String(r?.computed_status || r?.status || "").trim().toLowerCase();
+    }
+
+    document.addEventListener("DOMContentLoaded", async () => {
+      await utils.installAuthGuard("PIN");
+
+      const qs   = new URLSearchParams(location.search);
+      const id   = qs.get("id");
+      const edit = !!id;
+
+      const $title    = document.getElementById("title");
+      const $category = document.getElementById("category");
+      const $region   = document.getElementById("region");
+      const $district = document.getElementById("district");
+      const $desc     = document.getElementById("desc");
+      const $submit   = document.getElementById("submitBtn");
+      const $delete   = document.getElementById("deleteBtn");
+      const $csrGroup = document.getElementById("csrGroup");
+      const $volsGroup= document.getElementById("volsGroup");
+
+      document.getElementById("pageTitle").textContent = edit ? "Edit Request" : "Add New Request";
+      $submit.textContent = edit ? "Save Changes" : "Add Request";
+      if (!edit) $delete.style.display = "none";
+
+      await utils.pin.edit.loadMasters($category, $region, $district);
+
+      let req = null;
+      if (edit) {
+        req = await utils.pin.edit.loadRequest(parseInt(id,10), {
+          $title, $category, $region, $district, $desc,
+          $start_date: document.getElementById("start_date"),
+          $start_time: document.getElementById("start_time"),
+          $end_date:   document.getElementById("end_date"),
+          $end_time:   document.getElementById("end_time"),
+          $status:     document.getElementById("status"),
+        });
+
+        // show CSR / Volunteers only when accepted
+        if (statusNorm(req) === "accepted") {
+          const csrName = req.csr_name || (req.csr_id ? `CSR #${req.csr_id}` : "-");
+          const volsText =
+            req.volunteer_names ||
+            (Array.isArray(req.volunteers) ? req.volunteers.join(", ") : "") ||
+            "-";
+          document.getElementById("csrName").value = csrName;
+          document.getElementById("volunteerNames").textContent = volsText;
+          $csrGroup.classList.remove("hidden");
+          $volsGroup.classList.remove("hidden");
+        } else {
+          $csrGroup.classList.add("hidden");
+          $volsGroup.classList.add("hidden");
+        }
+
+        // Delete request (server will handle notification)
+        $delete.addEventListener("click", async () => {
+          if (!(await confirmAsync("Are you sure you want to delete this request?"))) return;
+
+          try {
+            $delete.disabled = true;
+            $delete.textContent = "Deleting...";
+            await utils.requests.remove(Number(id));   // backend handles notification
+            location.replace(utils.url.withTs("/pin"));
+          } catch (err) {
+            console.error(err);
+            alert(err?.message || "Failed to delete the request.");
+            $delete.disabled = false;
+            $delete.textContent = "Delete";
+          }
+        });
+
+      // Postal lookup
+      document.getElementById("btn-lookup").addEventListener("click", async () => {
+        const $postal = document.getElementById("postal");
+        const $hint   = document.getElementById("postal-hint");
+        try {
+          await utils.pin.edit.postalLookup($postal, $region, $district, $desc, $hint);
+        } catch (e) {
+          console.error(e);
+          if ($hint) $hint.textContent = "Lookup failed.";
+        }
+      });
+
+      // Region → Districts reload
+      $region.addEventListener("change", async () => {
+        await utils.pin.edit.reloadDistricts($region.value, $district);
+      });
+
+      // Create/Update submit
+      document.getElementById("editRequestForm").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const ok = await confirmAsync(edit ? "Save changes to this request?" : "Create this request?");
+        if (!ok) return;
+        await utils.pin.edit.save(edit ? parseInt(id,10) : null, {
+          $title, $category, $region, $district, $desc,
+          $start_date: document.getElementById("start_date"),
+          $start_time: document.getElementById("start_time"),
+          $end_date:   document.getElementById("end_date"),
+          $end_time:   document.getElementById("end_time"),
+        });
+      });
+
+      // Confirm modal helper
+      function confirmAsync(message) {
+        return new Promise(resolve => {
+          showConfirmModal(message, () => resolve(true), () => resolve(false));
+        });
+      }
+    }
+    });
+
+    function showConfirmModal(message, onConfirm, onCancel) {
+      const modal = document.getElementById("sharedModal");
+      const msgEl = document.getElementById("modalMessage");
+      msgEl.textContent = message;
+      modal.classList.add("open");
+
+      const confirmBtn = document.getElementById("modalConfirm");
+      const cancelBtn  = document.getElementById("modalCancel");
+      const onClose = () => modal.classList.remove("open");
+
+      const cb1 = () => { onClose(); onConfirm && onConfirm(); };
+      const cb2 = () => { onClose(); onCancel && onCancel();  };
+
+      confirmBtn.onclick = cb1;
+      cancelBtn.onclick  = cb2;
+    }
+  </script>
+</body>
+</html>

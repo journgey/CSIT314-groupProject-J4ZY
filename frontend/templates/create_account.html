@@ -1,0 +1,273 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Sign Up</title>
+  <link rel="stylesheet" href="/static/css/theme.css">
+  <link rel="stylesheet" href="/static/css/layout.css">
+  <link rel="stylesheet" href="/static/css/base.css">
+  <style>
+    .container { max-width: 640px; margin: 4vh auto; }
+    .row { display: grid; gap: 10px; }
+    label { font-weight: 600; margin-top: 8px; }
+    input, select { padding: 10px; width: 100%; }
+    .hidden { display: none; }
+    .error { color: #b00020; margin-top: 8px; white-space: pre-wrap; }
+    .success { color: #156a34; margin-top: 8px; }
+    .actions { margin-top: 16px; display: flex; gap: 10px; }
+    .btn { padding: 10px 14px; cursor: pointer; }
+    .btn-primary { font-weight: 700; }
+    .consent-banner { position: sticky; top: 0; z-index: 5; background: #fff3cd; border: 2px solid #ffeeba;
+      padding: 16px 20px; border-radius: 8px; margin-bottom: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+    .consent-banner h2 { margin-top: 0; font-size: 1.2rem; color: #856404; }
+    .radio-group { display: flex; gap: 18px; margin-top: 10px; }
+    .sr-only { position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+  </style>
+</head>
+<body>
+  <div class="container page" aria-live="polite">
+
+    <section class="consent-banner" id="consentBanner">
+      <h2>Consent for Personal Information Collection and Use</h2>
+      <p>
+        By creating an account, you agree that this platform may collect and store
+        your personal information (email, name, phone number) for authentication
+        and service provision. You may request correction or deletion by contacting the administrator.
+      </p>
+      <div class="radio-group">
+        <label><input type="radio" name="consent" value="yes"> Yes</label>
+        <label><input type="radio" name="consent" value="no"> No</label>
+      </div>
+      <div id="consentError" class="error"></div>
+    </section>
+
+    <header class="page-header">
+      <h1 class="page-title">Create Account</h1>
+      <a href="/" class="btn">Back to Login</a>
+    </header>
+
+    <div class="card content">
+      <form id="signupForm" class="row" novalidate>
+        <div>
+          <label for="email">Email</label>
+          <input id="email" type="email" required autocomplete="username" />
+        </div>
+
+        <div>
+          <label for="password">Password</label>
+          <input id="password" type="password" required autocomplete="new-password" minlength="6" />
+        </div>
+
+        <div>
+          <label for="repassword">Re-enter Password</label>
+          <input id="repassword" type="password" required autocomplete="new-password" minlength="6" />
+        </div>
+
+        <div>
+          <label for="name">Name</label>
+          <input id="name" type="text" required />
+        </div>
+
+        <div>
+          <label for="phone">Phone</label>
+          <input id="phone" type="text" />
+        </div>
+
+        <div>
+          <label for="role">Role</label>
+          <select id="role">
+            <option value="PIN">PIN</option>
+            <option value="CSR">CSR</option>
+          </select>
+        </div>
+
+        <div id="companyBlock" class="hidden">
+          <label for="companyName">Company Name (for CSR)</label>
+          <input id="companyName" type="text" placeholder="Enter company name" />
+        </div>
+
+        <div class="actions">
+          <button id="submitBtn" type="submit" class="btn btn-primary">Create</button>
+          <button type="button" class="btn" id="resetBtn">Reset</button>
+        </div>
+
+        <div id="msg" class="error" role="alert"></div>
+        <div id="ok" class="success"></div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Embedded script: removes utils.js dependency but preserves behavior -->
+  <script>
+  (function () {
+    // ----- API endpoints -----
+    const ENDPOINTS = {
+      ACCOUNT: "/api/account/"
+    };
+
+    // ----- Minimal HTTP helper (compatible with prior behavior) -----
+    async function apiFetch(url, opts = {}) {
+      const res = await fetch(url, { credentials: "include", ...opts });
+      if (!res.ok) {
+        let msg = "HTTP " + res.status;
+        try {
+          const text = await res.text();
+          try { const j = JSON.parse(text); msg = j?.error || j?.message || msg; }
+          catch { msg = text || msg; }
+        } catch {}
+        throw new Error(url + " → " + msg);
+      }
+      if (res.status === 204) return null;
+      const text = await res.text();
+      return text ? JSON.parse(text) : null;
+    }
+
+    const http = {
+      post: (url, body) => apiFetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body ?? {})
+      })
+    };
+
+    // ----- Accounts facade (create only, as used here) -----
+    const accounts = {
+      create(payload) { return http.post(ENDPOINTS.ACCOUNT, payload); }
+    };
+
+    // ----- Tiny form utilities (mirror previous utils.forms usage) -----
+    const forms = {
+      emailRe: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
+      get(selOrEl) {
+        const el = typeof selOrEl === "string" ? document.querySelector(selOrEl) : selOrEl;
+        return (el?.value || "").trim();
+      },
+      radio(name) {
+        const el = document.querySelector('input[name="' + name + '"]:checked');
+        return el ? String(el.value) : "";
+      },
+      require(...vals) { return vals.every(v => v !== null && v !== undefined && String(v).trim() !== ""); },
+      setError(elOrSel, msg) {
+        const el = typeof elOrSel === "string" ? document.querySelector(elOrSel) : elOrSel;
+        if (!el) return;
+        el.textContent = msg || "";
+      },
+      reportInvalid(inputEl, message) {
+        if (!inputEl) return false;
+        if (message) inputEl.setCustomValidity(message);
+        inputEl.reportValidity();
+        inputEl.focus();
+        inputEl.setCustomValidity("");
+        return false;
+      },
+      withPending(btnEl, hintEl, fn) {
+        return async (...args) => {
+          if (btnEl) btnEl.disabled = true;
+          if (hintEl) hintEl.classList && hintEl.classList.remove("sr-only");
+          try { return await fn(...args); }
+          finally {
+            if (btnEl) btnEl.disabled = false;
+            if (hintEl) hintEl.classList && hintEl.classList.add("sr-only");
+          }
+        };
+      },
+    };
+
+    // ----- DOM refs -----
+    const $ = (s) => document.querySelector(s);
+    const form = $("#signupForm");
+    const role = $("#role");
+    const companyBlock = $("#companyBlock");
+    const companyName = $("#companyName");
+    const msg = $("#msg");
+    const ok = $("#ok");
+    const btn = $("#submitBtn");
+    const resetBtn = $("#resetBtn");
+    const password = $("#password");
+    const repassword = $("#repassword");
+    const consentError = $("#consentError");
+
+    // ----- CSR company field toggle -----
+    function toggleCompany() {
+      const isCSR = role.value === "CSR";
+      companyBlock.classList.toggle("hidden", !isCSR);
+      companyName.required = isCSR;
+    }
+    role.addEventListener("change", toggleCompany);
+    toggleCompany();
+
+    // ----- Live password mismatch hint -----
+    const showPwdMismatch = () => {
+      forms.setError(msg, (password.value && repassword.value && password.value !== repassword.value)
+        ? "Passwords do not match." : "");
+    };
+    password.addEventListener("input", showPwdMismatch);
+    repassword.addEventListener("input", showPwdMismatch);
+
+    // ----- Consent check (must be 'yes') -----
+    function ensureConsent() {
+      const c = forms.radio("consent");
+      if (!c) { forms.setError(consentError, "Please select Yes or No."); return false; }
+      if (c !== "yes") { forms.setError(consentError, "You must agree (Yes) to continue."); return false; }
+      forms.setError(consentError, ""); return true;
+    }
+
+    // ----- Submit handler (preserves original logic) -----
+    const submitSafely = forms.withPending(btn, null, async () => {
+      forms.setError(msg, ""); forms.setError(ok, "");
+
+      if (!ensureConsent()) return;
+
+      const email = forms.get('#email');
+      const pwd   = forms.get('#password');
+      const repwd = forms.get('#repassword');
+      const name  = forms.get('#name');
+      const phone = forms.get('#phone');
+      const roleVal = role.value;
+
+      if (!forms.require(email, pwd, repwd, name)) {
+        forms.setError(msg, "Email, password, re-enter password, and name are required.");
+        return;
+      }
+      if (!forms.emailRe.test(email)) {
+        return forms.reportInvalid(document.getElementById('email'), "Please enter a valid email address.");
+      }
+      if (pwd !== repwd) {
+        return forms.reportInvalid(document.getElementById('repassword'), "Passwords do not match.");
+      }
+
+      const payload = { email, password: pwd, name, phone, role: roleVal, status: "active" };
+      if (roleVal === "CSR") {
+        const cname = forms.get('#companyName');
+        if (!forms.require(cname)) {
+          return forms.reportInvalid(document.getElementById('companyName'), "Please enter Company Name for CSR.");
+        }
+        payload.company_name = cname;
+      }
+
+      try {
+        await accounts.create(payload);
+        forms.setError(ok, "Account created. Redirecting to login...");
+        setTimeout(() => { window.location.href = "/"; }, 900);
+      } catch (err) {
+        forms.setError(msg, err?.message || "Sign up failed.");
+      }
+    });
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      try { await submitSafely(); }
+      catch (err) { forms.setError(msg, err?.message || "Sign up failed."); }
+    });
+
+    // ----- Reset behavior equals native form reset + clear messages -----
+    resetBtn.addEventListener("click", () => {
+      form.reset();
+      toggleCompany();
+      forms.setError(msg, ""); forms.setError(ok, ""); forms.setError(consentError, "");
+    });
+  })();
+  </script>
+</body>
+</html>

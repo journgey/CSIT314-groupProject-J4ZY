@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Platform Manager – Generate Report</title>
+  <link rel="stylesheet" href="/static/css/theme.css" />
+  <link rel="stylesheet" href="/static/css/base.css" />
+  <link rel="stylesheet" href="/static/css/layout.css" />
+  <style>
+    .grid { display:grid; grid-template-columns: 1fr 1fr; gap:12px; align-items:center; }
+    .right { text-align:right; }
+    .mt-2{ margin-top:.5rem; } .mt-3{ margin-top:1rem; } .mt-4{ margin-top:1.5rem; }
+    tfoot td { font-weight:700; }
+  </style>
+</head>
+<body>
+<main class="container page">
+  <header class="page-header">
+    <h2 class="page-title">Generate Report</h2>
+    <button id="logoutBtn" class="btn btn-outline">Logout</button>
+    <div class="toolbar">
+      <a class="btn btn-outline" href="/pm">← Back to Dashboard</a>
+    </div>
+  </header>
+
+  <div id="flash" class="muted"></div>
+
+  <section class="card content">
+    <form id="f" class="grid" novalidate>
+      <label for="start">From (YYYY-MM-DD)</label>
+      <input id="start" type="date" class="input" required />
+      <label for="end">To (YYYY-MM-DD)</label>
+      <input id="end" type="date" class="input" required />
+    </form>
+    <div class="mt-2">
+      <button id="runBtn" class="btn btn-primary">Generate Report</button>
+    </div>
+
+    <div id="results" class="mt-4" style="display:none;">
+      <h3>1) Distribution of Created Requests (by Status)</h3>
+      <p id="descCreated" class="muted"></p>
+      <table class="table" id="tblCreated">
+        <thead><tr><th>Status</th><th class="right">Count</th><th class="right">%</th></tr></thead>
+        <tbody></tbody>
+        <tfoot></tfoot>
+      </table>
+
+      <h3 class="mt-3">2) Ended Requests Performance</h3>
+      <p id="descEnded" class="muted"></p>
+      <table class="table" id="tblEnded">
+        <thead><tr><th>Metric</th><th class="right">Count</th><th class="right">Rate</th></tr></thead>
+        <tbody></tbody>
+      </table>
+
+      <h3 class="mt-3">3) Regional Breakdown</h3>
+      <table class="table" id="tblRegional">
+        <thead><tr><th>Region</th><th>District</th><th class="right">Created</th><th class="right">Ended</th></tr></thead>
+        <tbody></tbody>
+      </table>
+
+      <h3 class="mt-3">4) Category Breakdown</h3>
+      <table class="table" id="tblCategory">
+        <thead><tr><th>Category</th><th class="right">Created</th><th class="right">Ended</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<script>
+/* ---------- HTTP ---------- */
+async function apiFetch(url, opts={}) {
+  const res = await fetch(url, { credentials:"include", ...opts });
+  if(!res.ok){
+    let msg=`HTTP ${res.status}`;
+    try{ const t=await res.text(); try{ const j=JSON.parse(t); msg=j?.error||j?.message||msg; }catch{ msg=t||msg; } }catch{}
+    throw new Error(`${url} → ${msg}`);
+  }
+  if(res.status===204) return null;
+  const txt=await res.text();
+  return txt?JSON.parse(txt):null;
+}
+const http = {
+  get:(u)=>apiFetch(u),
+  post:(u,b)=>apiFetch(u,{method:"POST",headers:{ "Content-Type":"application/json" },body:JSON.stringify(b??{})})
+};
+
+/* ---------- Auth ---------- */
+function normalizeRole(r){
+  const x=String(r||"").trim().toLowerCase();
+  if(!x) return "";
+  if(["useradmin","ua","user_admin"].includes(x)) return "UserAdmin";
+  if(["platformmanager","pm","platform_manager"].includes(x)) return "PlatformManager";
+  if(x==="pin") return "PIN";
+  if(x==="csr") return "CSR";
+  return r;
+}
+async function installAuthGuard(reqRole=null){
+  try{
+    const me = await http.get("/api/auth/me");
+    const role = normalizeRole(me?.role);
+    if(!role) return location.replace("/");
+    if(reqRole && role!==reqRole) return location.replace("/");
+  }catch{ location.replace("/"); }
+}
+async function doLogout(){ try{ await http.post("/api/auth/logout",{});} finally{ location.replace("/"); }}
+
+/* ---------- Reports API ---------- */
+const reportsApi = {
+  run: ({start,end}) => http.get(`/api/report?${new URLSearchParams({start,end})}`)
+};
+
+/* ---------- Rendering helpers ---------- */
+const $=(s,r=document)=>r.querySelector(s);
+function setFlash(t){ const el=$("#flash"); if(el) el.textContent=t||""; }
+const num = { safe(v){ const n=Number(v); return Number.isFinite(n)?n:0; } };
+const fmt = { pct(x){ if(x==null||isNaN(x)) return ""; return (Math.round(Number(x)*10)/10).toFixed(1); } };
+function clearBody(sel){ const el=$(`${sel} tbody`); if(el) el.innerHTML=""; }
+function clearFoot(sel){ const el=$(`${sel} tfoot`); if(el) el.innerHTML=""; }
+function appendRow(sel, html){ const el=$(`${sel} tbody`); if(!el) return; const tr=document.createElement("tr"); tr.innerHTML=html; el.appendChild(tr); }
+
+function renderCreated(sel, rows){
+  clearBody(sel); clearFoot(sel);
+  const items = Array.isArray(rows)?rows:[];
+  let total = 0;
+  items.forEach(r=>{ total+=num.safe(r.count); });
+  items.forEach(r=>{
+    const cnt = num.safe(r.count);
+    const pct = r.percentage!=null ? r.percentage : (total? (cnt*100/total):0);
+    appendRow(sel, `<td>${(r.status??"")}</td><td class="right">${cnt}</td><td class="right">${fmt.pct(pct)}</td>`);
+  });
+  const tf=$(`${sel} tfoot`); if(tf){ tf.innerHTML = `<tr><td><b>Total</b></td><td><b>${total}</b></td><td></td></tr>`; }
+}
+
+function renderEnded(sel, o={}){
+  clearBody(sel);
+  const rows = [
+    { metric:"Ended total", count:num.safe(o.ended_total), rate:"" },
+    { metric:"Completed",   count:num.safe(o.completed_count), rate:o.completed_rate },
+    { metric:"Expired",     count:num.safe(o.expired_count),   rate:o.expired_rate },
+  ];
+  rows.forEach(r=>{
+    appendRow(sel, `<td>${r.metric}</td><td class="right">${r.count}</td><td class="right">${r.rate===""?"":fmt.pct(r.rate)}</td>`);
+  });
+}
+function mergeRegional(createdArr, endedArr){
+  const m=new Map();
+  (createdArr||[]).forEach(r=>{
+    const key=`${r.region??r.region_name??""}|||${r.district??r.district_name??""}`;
+    const v=m.get(key)||{ region:r.region??r.region_name??"", district:r.district??r.district_name??"", created_count:0, ended_count:0 };
+    v.created_count += num.safe(r.created_count);
+    m.set(key,v);
+  });
+  (endedArr||[]).forEach(r=>{
+    const key=`${r.region??r.region_name??""}|||${r.district??r.district_name??""}`;
+    const v=m.get(key)||{ region:r.region??r.region_name??"", district:r.district??r.district_name??"", created_count:0, ended_count:0 };
+    v.ended_count += num.safe(r.ended_count);
+    m.set(key,v);
+  });
+  return Array.from(m.values()).sort((a,b)=>{
+    const ra=(a.region||"").toLowerCase(), rb=(b.region||"").toLowerCase();
+    if(ra!==rb) return ra<rb?-1:1;
+    const da=(a.district||"").toLowerCase(), db=(b.district||"").toLowerCase();
+    return da<db?-1: da>db?1:0;
+  });
+}
+function renderRegional(sel, createdArr, endedArr){
+  clearBody(sel);
+  const rows = mergeRegional(createdArr, endedArr);
+  rows.forEach(r=>{
+    appendRow(sel, `<td>${r.region||""}</td><td>${r.district||""}</td><td class="right">${num.safe(r.created_count)}</td><td class="right">${num.safe(r.ended_count)}</td>`);
+  });
+}
+function mergeCategory(createdArr, endedArr){
+  const m=new Map();
+  (createdArr||[]).forEach(r=>{
+    const c=r.category??r.category_name??"";
+    const v=m.get(c)||{ category:c, created_count:0, ended_count:0 };
+    v.created_count += num.safe(r.created_count ?? r.created ?? r.c_created);
+    m.set(c,v);
+  });
+  (endedArr||[]).forEach(r=>{
+    const c=r.category??r.category_name??"";
+    const v=m.get(c)||{ category:c, created_count:0, ended_count:0 };
+    v.ended_count += num.safe(r.ended_count ?? r.ended ?? r.c_ended);
+    m.set(c,v);
+  });
+  return Array.from(m.values()).sort((a,b)=>{
+    const ca=(a.category||"").toLowerCase(), cb=(b.category||"").toLowerCase();
+    return ca<cb?-1: ca>cb?1:0;
+  });
+}
+function renderCategory(sel, createdArr, endedArr){
+  clearBody(sel);
+  mergeCategory(createdArr, endedArr).forEach(r=>{
+    appendRow(sel, `<td>${r.category||""}</td><td class="right">${num.safe(r.created_count)}</td><td class="right">${num.safe(r.ended_count)}</td>`);
+  });
+}
+
+/* ---------- Wire ---------- */
+document.addEventListener("DOMContentLoaded", async ()=>{
+  await installAuthGuard("PlatformManager");
+  $("#logoutBtn")?.addEventListener("click", doLogout);
+
+  const $start=$("#start"), $end=$("#end"), $btn=$("#runBtn");
+
+  async function run(){
+    const s=$start.value, e=$end.value;
+    if(!s||!e) return setFlash("Please select both dates (From and To).");
+    if(new Date(s)>new Date(e)) return setFlash("The end date must be on or after the start date.");
+
+    setFlash("Generating...");
+    try{
+      const data = await reportsApi.run({ start:s, end:e });
+      renderCreated("#tblCreated", data?.created_status ?? []);
+      renderEnded("#tblEnded", data?.ended_performance ?? {});
+      renderRegional("#tblRegional", data?.regional?.created ?? [], data?.regional?.ended ?? []);
+      renderCategory("#tblCategory", data?.category?.created ?? [], data?.category?.ended ?? []);
+      $("#descCreated").textContent = `Created requests from ${s} to ${e}.`;
+      $("#descEnded").textContent   = `Ended requests from ${s} to ${e}.`;
+      $("#results").style.display = "";
+      setFlash("");
+    }catch(err){ console.error(err); setFlash(err?.message||"Failed to generate."); }
+  }
+
+  $btn.addEventListener("click", (e)=>{ e.preventDefault(); run(); });
+});
+</script>
+</body>
+</html>

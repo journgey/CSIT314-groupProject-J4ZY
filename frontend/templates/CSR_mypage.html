@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>CSR Representative Dashboard</title>
+  <link rel="stylesheet" href="/static/css/theme.css" />
+  <link rel="stylesheet" href="/static/css/base.css" />
+  <link rel="stylesheet" href="/static/css/layout.css" />
+  <style>
+    .stat-card {
+      text-align: center; padding: 12px; border-radius: 8px;
+      background: var(--color-surface, #fff);
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1); flex: 1;
+    }
+    .grid-3 { display: flex; gap: 16px; }
+    .toolbar { display: flex; justify-content: space-between; gap: 16px; margin: 24px 0; }
+    .toolbar .btn { flex: 1; font-size: 1rem; padding: 14px 0; border-radius: 8px; }
+    .muted { color: gray; font-style: italic; }
+    .page-header .right { margin-left: auto; }
+    .right { display:flex; align-items:center; gap: 8px; }
+    .clickable-row { cursor: pointer; }
+    .right .btn { white-space: nowrap; }
+  </style>
+</head>
+<body>
+  <div class="page container">
+    <div class="page-header">
+      <h2 class="page-title">Welcome to CSR Representative Dashboard</h2>
+      <div class="right">
+        <button id="logoutBtn" class="btn btn-outline">Logout</button>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <section class="card">
+        <h3>Notifications</h3>
+        <ul id="notificationsList" style="margin-top:12px; padding-left:20px;"></ul>
+      </section>
+
+      <section class="content card">
+        <h3>Account Overview</h3>
+        <div class="grid-3 mt-3">
+          <div class="card stat-card"><h2 id="completedCount">0</h2><p>Completed</p></div>
+          <div class="card stat-card"><h2 id="shortlistedCount">0</h2><p>Shortlisted</p></div>
+          <div class="card stat-card"><h2 id="acceptedCount">0</h2><p>Accepted</p></div>
+        </div>
+      </section>
+    </div>
+
+    <div class="toolbar">
+      <button class="btn btn-primary" onclick="window.location.href='/csr/all_requests'">View Pending Requests</button>
+      <button class="btn btn-outline" onclick="window.location.href='/csr/history'">View Completed Requests</button>
+      <button class="btn btn-outline" onclick="window.location.href='/csr/volunteers'">View Volunteers</button>
+    </div>
+
+    <!-- Shortlisted -->
+    <section class="content card">
+      <h3>Shortlisted Requests</h3>
+      <table class="table" id="shortlistedTable">
+        <thead>
+          <tr>
+            <th>Title</th><th>Category</th><th>District</th><th>Period</th><th>Actions</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <!-- Accepted -->
+    <section class="content card">
+      <h3>Accepted Requests</h3>
+      <table class="table" id="acceptedTable">
+        <thead>
+          <tr>
+            <th>Title</th><th>Category</th><th>District</th><th>Period</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </section>
+  </div>
+
+  <script>
+    // ================== Tiny helpers (no external utils) ==================
+    const escapeHtml = (s) => String(s ?? "").replace(/[&<>"']/g, m => ({
+      "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+    }[m]));
+
+    function statusNorm(rOrStr){
+      const s = (typeof rOrStr === "string" ? rOrStr : (rOrStr?.computed_status ?? rOrStr?.status ?? "")).toLowerCase();
+      return s || "-";
+    }
+
+    function fmtDate(iso){
+      if (!iso) return "";
+      // 서버가 "YYYY-MM-DD HH:MM:SS" 혹은 ISO를 줄 수 있으므로 그대로 파싱
+      const s = String(iso).replace("T"," ").trim();
+      const m = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ ](\d{2}):(\d{2}))?/);
+      if (!m) return s;
+      const [,Y,M,D,HH="00",MM="00"] = m;
+      return `${D}-${M}-${Y} ${HH}:${MM}`;
+    }
+
+    const formatPeriod = (r) => {
+      const A = fmtDate(r.start_at);
+      const B = fmtDate(r.end_at);
+      return (A && B) ? `${A} ~ ${B}` : (A || B || "-");
+    };
+
+    async function apiFetch(url, opts = {}) {
+      const res = await fetch(url, { credentials: "include", ...opts });
+      if (!res.ok) {
+        let msg = `HTTP ${res.status}`;
+        try {
+          const t = await res.text();
+          try { const j = JSON.parse(t); msg = j?.error || j?.message || msg; } catch { msg = t || msg; }
+        } catch {}
+        throw new Error(`${url} → ${msg}`);
+      }
+      if (res.status === 204) return null;
+      const txt = await res.text();
+      return txt ? JSON.parse(txt) : null;
+    }
+    const GET  = (u)   => apiFetch(u);
+    const POST = (u,b) => apiFetch(u, { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(b ?? {}) });
+    const DEL  = (u)   => apiFetch(u, { method:"DELETE" });
+
+    // ================== Auth guard (CSR only) ==================
+    async function guardCSR() {
+      try {
+        const me = await GET("/api/auth/me");
+        const role = String(me?.role || "").toLowerCase();
+        if (role !== "csr") { window.location.href = "/"; return null; }
+        return me; // { id, role, ... }
+      } catch {
+        window.location.href = "/";
+        return null;
+      }
+    }
+
+    // ================== Loaders ==================
+    async function loadShortlistedRows(csrId) {
+      // 서버가 v_shortlist_join 형태로 내려주는 필드(sid + 요청 요약) 사용
+      const res = await GET(`/api/shortlist/?csr_id=${encodeURIComponent(csrId)}&pending=1`);
+      const items = Array.isArray(res) ? res : (res?.items ?? []);
+      return items.map(x => ({
+        shortlist_id: x.shortlist_id,
+        request: {
+          id: x.id,
+          title: x.title,
+          category_name: x.category_name,
+          district_name: x.district_name,
+          start_at: x.start_at,
+          end_at: x.end_at,
+          status: x.status || x.computed_status
+        }
+      }));
+    }
+
+    async function loadAcceptedRows(csrId) {
+      const res = await GET(`/api/request?csr_id=${encodeURIComponent(csrId)}`);
+      const arr = Array.isArray(res) ? res : (res?.items ?? []);
+      return arr.filter(r => statusNorm(r) === "accepted");
+    }
+
+    // ================== Renderers ==================
+    function renderShortlisted(tbody, rows) {
+      tbody.innerHTML = "";
+      if (!rows.length) {
+        tbody.innerHTML = `<tr><td colspan="5" class="muted" style="text-align:center; padding:12px;">No shortlisted requests.</td></tr>`;
+        return;
+      }
+      rows.forEach(x => {
+        const r = x.request;
+        const reqId = r.id;
+        const tr = document.createElement("tr");
+        tr.className = "clickable-row";
+        tr.innerHTML = `
+          <td>${escapeHtml(r.title || "(no title)")}</td>
+          <td>${escapeHtml(r.category_name || "-")}</td>
+          <td>${escapeHtml(r.district_name || "-")}</td>
+          <td>${formatPeriod(r)}</td>
+          <td>
+            <button class="btn btn-sm btn-primary" data-action="accept" data-id="${reqId}">Accept</button>
+            <button class="btn btn-sm btn-outline" data-action="remove" data-sid="${x.shortlist_id}">Remove</button>
+          </td>
+        `;
+        tr.addEventListener("click", (e) => {
+          if (e.target.closest("button")) return; // 버튼 클릭은 무시
+          window.location.href = `/csr/view_request?id=${encodeURIComponent(reqId)}`;
+        });
+        tbody.appendChild(tr);
+      });
+    }
+
+    function renderAccepted(tbody, rows) {
+      tbody.innerHTML = "";
+      if (!rows.length) {
+        tbody.innerHTML = `<tr><td colspan="4" class="muted" style="text-align:center; padding:12px;">No accepted requests.</td></tr>`;
+        return;
+      }
+      rows.forEach(r => {
+        const reqId = r.id;
+        const tr = document.createElement("tr");
+        tr.className = "clickable-row";
+        tr.innerHTML = `
+          <td>${escapeHtml(r.title || "(no title)")}</td>
+          <td>${escapeHtml(r.category_name || "-")}</td>
+          <td>${escapeHtml(r.district_name || "-")}</td>
+          <td>${formatPeriod(r)}</td>
+        `;
+        tr.addEventListener("click", () => {
+          window.location.href = `/csr/view_request?id=${encodeURIComponent(reqId)}`;
+        });
+        tbody.appendChild(tr);
+      });
+    }
+
+    // ================== Actions ==================
+    function wireShortlistActions(tbody, csrId, reloadAll) {
+      tbody.addEventListener("click", async (e) => {
+        const btn = e.target.closest("button[data-action]");
+        if (!btn) return;
+        e.stopPropagation();
+
+        const action = btn.dataset.action;
+        if (action === "accept") {
+          const reqId = parseInt(btn.dataset.id, 10);
+          if (!reqId) return;
+          window.location.href = `/csr/match?id=${encodeURIComponent(reqId)}`;
+          return;
+        }
+
+        if (action === "remove") {
+          const sId = parseInt(btn.dataset.sid, 10);
+          if (!sId) { alert("Missing shortlist id."); return; }
+
+          const ok = confirm("Remove this request from your shortlist?");
+          if (!ok) return;
+
+          const tr = btn.closest("tr");
+          const placeholder = document.createElement("tr");
+          placeholder.innerHTML = `<td colspan="5" class="muted" style="padding:8px 12px;">Removing...</td>`;
+          if (tr && tr.parentNode) tr.parentNode.replaceChild(placeholder, tr);
+
+          try {
+            await DEL(`/api/shortlist/${encodeURIComponent(sId)}`); // 서버: DELETE /api/shortlist/<shortlist_id>
+            await reloadAll();
+          } catch (err) {
+            console.error(err);
+            alert("Failed to remove from shortlist. Please try again.");
+            await reloadAll();
+          }
+        }
+      });
+    }
+
+    // ================== Init ==================
+    document.addEventListener("DOMContentLoaded", async () => {
+      try {
+        const me = await guardCSR();
+        if (!me) return;
+
+        // 1) 알림 조회 (백엔드에서 csr_id 필터가 된다면 쿼리스트링 붙이기 권장)
+        let notiRes = [];
+        try {
+          notiRes = await GET(`/api/notification?csr_id=${encodeURIComponent(me.id)}`);
+        } catch {
+          notiRes = []; // 실패 시 빈 배열
+        }
+        const notis = Array.isArray(notiRes) ? notiRes : (notiRes?.items ?? []);
+
+        // 2) 렌더링
+        const ul = document.getElementById('notificationsList');
+        ul.innerHTML = '';
+        if (!notis.length) {
+          const li = document.createElement('li');
+          li.className = 'muted';
+          li.textContent = 'No notifications.';
+          ul.appendChild(li);
+        } else {
+          notis.forEach(n => {
+            const li = document.createElement('li');
+            li.textContent = (n.message || n.text || 'Notification') + (n.created_at ? ` (${n.created_at})` : '');
+            ul.appendChild(li);
+          });
+        }
+
+        // 3) 나머지 데이터 로드
+        const shortlistedTbody = document.querySelector("#shortlistedTable tbody");
+        const acceptedTbody    = document.querySelector("#acceptedTable tbody");
+
+        async function reloadAll() {
+          const [shortlistedRows, acceptedRows] = await Promise.all([
+            loadShortlistedRows(me.id),
+            loadAcceptedRows(me.id),
+          ]);
+          document.getElementById("shortlistedCount").textContent = shortlistedRows.length;
+          document.getElementById("acceptedCount").textContent    = acceptedRows.length;
+          const completedCount = acceptedRows.filter(r => statusNorm(r) === "completed").length;
+          document.getElementById("completedCount").textContent   = completedCount;
+
+          renderShortlisted(shortlistedTbody, shortlistedRows);
+          renderAccepted(acceptedTbody, acceptedRows);
+        }
+
+        await reloadAll();
+        wireShortlistActions(shortlistedTbody, me.id, reloadAll);
+
+        document.getElementById("logoutBtn")?.addEventListener("click", async () => {
+          try { await POST("/api/auth/logout", {}); }
+          finally { window.location.href = "/"; }
+        });
+      } catch (err) {
+        console.error(err);
+        alert(err?.message || "Failed to load CSR dashboard.");
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,59 +1,48 @@
-from flask import Blueprint, request, jsonify
-from backend.db_session import get_db
-from backend.repositories.shortlist_repository import ShortlistRepository
-from backend.repositories.requests_repository import RequestsRepository
-from backend.repositories.accounts_repository import AccountsRepository
-from backend.services.shortlist_service import ShortlistService
-from backend.auth import login_required, require_role
+from typing import Any, Dict, List, Optional
 
-shortlists_bp = Blueprint("shortlists_bp", __name__)
+class ShortlistController:
+    def __init__(self, shortlist_repo, accounts_repo=None, requests_repo=None):
+        self.shortlist_repo = shortlist_repo
+        self.accounts_repo = accounts_repo
+        self.requests_repo = requests_repo
 
-def _service():
-    repo = ShortlistRepository(get_db())
-    req_repo = RequestsRepository(get_db())
-    acc_repo = AccountsRepository(get_db())
-    return ShortlistService(repo, accounts_repo=acc_repo, requests_repo=req_repo)
+    def add_to_shortlist(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        csr_id = payload.get("csr_id")
+        request_id = payload.get("request_id")
 
-@login_required
-@require_role("CSR")
-@shortlists_bp.route("/", methods=["POST"])
-def add_shortlist():
-    try:
-        created = _service().add_to_shortlist(request.get_json(force=True))
-        return jsonify(created), (200 if created.get("duplicate") else 201)
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 400
-    
-@login_required
-@require_role("CSR")
-@shortlists_bp.route("/", methods=["GET"])
-def list_by_csr():
-    csr_id = request.args.get("csr_id", type=int)
-    if csr_id is None:
-        return jsonify({"error": "csr_id is required"}), 400
-    items = _service().list_shortlist(csr_id)
-    return jsonify({"items": items}), 200
+        if not isinstance(csr_id, int) or not isinstance(request_id, int):
+            raise ValueError("csr id and request id must be integers")
 
-@login_required
-@require_role("CSR")
-@shortlists_bp.route("/<int:shortlist_id>", methods=["DELETE"])
-def remove_shortlist(shortlist_id: int):
-    try:
-        result = _service().remove_shortlist(shortlist_id)
-        return jsonify(result), 200
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 404
+        if self.accounts_repo:
+            csr = self.accounts_repo.get_account_by_id(csr_id)
+            if not csr or csr.get("role") != "CSR":
+                raise ValueError("CSR account not found or invalid role")
+        if self.requests_repo:
+            req = self.requests_repo.get_request_by_id(request_id)
+            if not req:
+                raise ValueError("Request not found")
 
-@login_required
-@require_role("CSR")
-@shortlists_bp.route("/", methods=["DELETE"])
-def delete_by_pair():
-    csr_id = request.args.get("csr_id", type=int)
-    req_id = request.args.get("request_id", type=int)
-    if csr_id is None or req_id is None:
-        return jsonify({"error": "csr_id and request_id must be provided"}), 400
-    try:
-        result = _service().remove_shortlist_by_pair(csr_id=csr_id, request_id=req_id)
-        return jsonify(result), 200
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 404
+        exists = self.shortlist_repo.get_by_pair(csr_id=csr_id, request_id=request_id)
+        if exists:
+            return {"id": exists["id"], "csr_id": csr_id, "request_id": request_id, "duplicate": True}
+
+        return self.shortlist_repo.insert(csr_id=csr_id, request_id=request_id)
+
+    def list_shortlist(self, csr_id: int, only_pending: bool = False) -> List[Dict[str, Any]]:
+        if not isinstance(csr_id, int):
+            raise ValueError("csr id must be an integer")
+        return self.shortlist_repo.list_by_csr(csr_id, only_pending=only_pending)
+
+    def remove_shortlist(self, shortlist_id: int) -> Dict[str, Any]:
+        if not isinstance(shortlist_id, int):
+            raise ValueError("shortlist id must be an integer")
+        ok = self.shortlist_repo.delete(shortlist_id)
+        if not ok:
+            raise ValueError("Shortlist item not found")
+        return {"deleted_id": shortlist_id}
+
+    def remove_shortlist_by_pair(self, *, csr_id: int, request_id: int) -> Dict[str, Any]:
+        ok = self.shortlist_repo.delete_by_pair(csr_id=csr_id, request_id=request_id)
+        if not ok:
+            raise ValueError("Shortlist pair not found")
+        return {"deleted": True, "csr_id": csr_id, "request_id": request_id}

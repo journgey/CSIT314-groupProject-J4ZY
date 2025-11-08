@@ -1,34 +1,22 @@
-from flask import Blueprint, request, jsonify, session, current_app
-import backend.db_session as db_session
+from typing import Dict, Any
+from werkzeug.security import check_password_hash
 from backend.repositories.auth_repository import AuthRepository
-from backend.services.auth_service import AuthService
 
-auth_bp = Blueprint("auth", __name__)
+class AuthController:
+    def __init__(self, repo: AuthRepository):
+        self.repo = repo
 
-def _svc():
-    get_db = current_app.config.get("GET_DB", db_session.get_db)
-    return AuthService(AuthRepository(get_db()))
+    def login(self, email: str, password: str) -> Dict[str, Any]:
+        acct = self.repo.find_by_email(email)
+        if not acct or not check_password_hash(acct["password"], password):
+            raise ValueError("Invalid email or password")
+        if acct.get("status") != "active":
+            raise ValueError("Account inactive")
 
-@auth_bp.post("/login")
-def login():
-    data = request.get_json(silent=True) or {}
-    email = data.get("email"); password = data.get("password")
-    if not email or not password:
-        return jsonify({"error": "email and password are required"}), 400
-
-    try:
-        user = _svc().login(email, password)
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 401
-
-    session["user"] = user  # store to session
-    return jsonify({"ok": True, "user": user}), 200
-
-@auth_bp.post("/logout")
-def logout():
-    session.pop("user", None)
-    return jsonify({"ok": True}), 200
-
-@auth_bp.get("/me")
-def me():
-    return jsonify(session.get("user") or {}), 200
+        return {
+            "id": acct["id"],
+            "role": acct.get("role"),
+            "company_id": acct.get("company_id"),
+            "name": acct.get("name"),
+            "email": acct.get("email"),
+        }
