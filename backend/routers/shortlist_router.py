@@ -49,3 +49,12 @@ def delete_by_pair():
         return jsonify({"error": "csr_id and request_id must be provided"}), 400
     result = _service().remove_shortlist_by_pair(csr_id=csr_id, request_id=req_id)
     return jsonify(result), 200
+
+@shortlists_bp.route("/stats", methods=["GET"])
+def get_pin_shortlist_count():
+    pin_id = request.args.get("pin_id", type=int)
+    if not pin_id:
+        return jsonify({"error": "pin_id is required"}), 400
+
+    out = _service().get_pin_shortlist_count(pin_id)
+    return jsonify(out), 200

@@ -113,134 +113,324 @@
   </div>
 
   <script>
-    // Local status normalizer (avoid relying on utils.status)
+    // -------- Helpers (general) --------
+    const parseIntOrNull = (v) => {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : null;
+    };
+
+    const setSelectByIdOrText = (selectEl, wantId, wantText) => {
+      if (!selectEl) return false;
+      // 1) try id
+      if (wantId != null) {
+        for (const opt of selectEl.options) {
+          if (parseIntOrNull(opt.value) === parseIntOrNull(wantId)) {
+            selectEl.value = opt.value;
+            return true;
+          }
+        }
+      }
+      // 2) fallback by text (case-insensitive, trimmed)
+      if (wantText) {
+        const target = String(wantText).trim().toLowerCase();
+        for (const opt of selectEl.options) {
+          if (String(opt.textContent).trim().toLowerCase() === target) {
+            selectEl.value = opt.value;
+            return true;
+          }
+        }
+      }
+      return false;
+    };
+
+    // Normalize status safely
     function statusNorm(r) {
       return String(r?.computed_status || r?.status || "").trim().toLowerCase();
     }
 
     document.addEventListener("DOMContentLoaded", async () => {
-      await utils.installAuthGuard("PIN");
+      if (window.utils?.installAuthGuard) {
+        await window.utils.installAuthGuard("PIN");
+      }
 
       const qs   = new URLSearchParams(location.search);
       const id   = qs.get("id");
       const edit = !!id;
 
-      const $title    = document.getElementById("title");
-      const $category = document.getElementById("category");
-      const $region   = document.getElementById("region");
-      const $district = document.getElementById("district");
-      const $desc     = document.getElementById("desc");
-      const $submit   = document.getElementById("submitBtn");
-      const $delete   = document.getElementById("deleteBtn");
-      const $csrGroup = document.getElementById("csrGroup");
-      const $volsGroup= document.getElementById("volsGroup");
+      const $pageTitle = document.getElementById("pageTitle");
+      const $title     = document.getElementById("title");
+      const $category  = document.getElementById("category");
+      const $region    = document.getElementById("region");
+      const $district  = document.getElementById("district");
+      const $desc      = document.getElementById("desc");
+      const $submit    = document.getElementById("submitBtn");
+      const $delete    = document.getElementById("deleteBtn");
 
-      document.getElementById("pageTitle").textContent = edit ? "Edit Request" : "Add New Request";
-      $submit.textContent = edit ? "Save Changes" : "Add Request";
-      if (!edit) $delete.style.display = "none";
+      const $postal    = document.getElementById("postal");
+      const $hint      = document.getElementById("postal-hint");
 
-      await utils.pin.edit.loadMasters($category, $region, $district);
+      const $start_date = document.getElementById("start_date");
+      const $start_time = document.getElementById("start_time");
+      const $end_date   = document.getElementById("end_date");
+      const $end_time   = document.getElementById("end_time");
 
+      const $csrGroup  = document.getElementById("csrGroup");
+      const $volsGroup = document.getElementById("volsGroup");
+      const $csrName   = document.getElementById("csrName");
+      const $volNames  = document.getElementById("volunteerNames");
+
+      $pageTitle.textContent = edit ? "Edit Request" : "Add New Request";
+      $submit.textContent    = edit ? "Save Changes" : "Add Request";
+      if (!edit) $delete.classList.add("hidden");
+
+      // -------- Masters (categories, regions) --------
+      try {
+        if (window.utils?.pin?.edit?.loadMasters) {
+          await window.utils.pin.edit.loadMasters($category, $region, $district);
+        } else {
+          await Promise.all([fillCategories(), fillRegions()]);
+        }
+      } catch (e) {
+        console.error("[masters] load failed:", e);
+      }
+
+      // -------- If editing, load request --------
       let req = null;
       if (edit) {
-        req = await utils.pin.edit.loadRequest(parseInt(id,10), {
-          $title, $category, $region, $district, $desc,
-          $start_date: document.getElementById("start_date"),
-          $start_time: document.getElementById("start_time"),
-          $end_date:   document.getElementById("end_date"),
-          $end_time:   document.getElementById("end_time"),
-          $status:     document.getElementById("status"),
-        });
-
-        // show CSR / Volunteers only when accepted
-        if (statusNorm(req) === "accepted") {
-          const csrName = req.csr_name || (req.csr_id ? `CSR #${req.csr_id}` : "-");
-          const volsText =
-            req.volunteer_names ||
-            (Array.isArray(req.volunteers) ? req.volunteers.join(", ") : "") ||
-            "-";
-          document.getElementById("csrName").value = csrName;
-          document.getElementById("volunteerNames").textContent = volsText;
-          $csrGroup.classList.remove("hidden");
-          $volsGroup.classList.remove("hidden");
-        } else {
-          $csrGroup.classList.add("hidden");
-          $volsGroup.classList.add("hidden");
-        }
-
-        // Delete request (server will handle notification)
-        $delete.addEventListener("click", async () => {
-          if (!(await confirmAsync("Are you sure you want to delete this request?"))) return;
-
-          try {
-            $delete.disabled = true;
-            $delete.textContent = "Deleting...";
-            await utils.requests.remove(Number(id));   // backend handles notification
-            location.replace(utils.url.withTs("/pin"));
-          } catch (err) {
-            console.error(err);
-            alert(err?.message || "Failed to delete the request.");
-            $delete.disabled = false;
-            $delete.textContent = "Delete";
-          }
-        });
-
-      // Postal lookup
-      document.getElementById("btn-lookup").addEventListener("click", async () => {
-        const $postal = document.getElementById("postal");
-        const $hint   = document.getElementById("postal-hint");
         try {
-          await utils.pin.edit.postalLookup($postal, $region, $district, $desc, $hint);
+          if (window.utils?.pin?.edit?.loadRequest) {
+            req = await window.utils.pin.edit.loadRequest(parseInt(id,10), {
+              $title, $category, $region, $district, $desc,
+              $start_date, $start_time, $end_date, $end_time,
+            });
+          } else {
+            req = await getJson(`/api/request/${encodeURIComponent(id)}`);
+            if ($title) $title.value = req?.title || "";
+            if ($desc)  $desc.value  = req?.description || "";
+            if ($category) $category.value = req?.category_id ?? "";
+            if ($region)   $region.value   = req?.region_id ?? "";
+            if ($region && $district) {
+              await fillDistricts($region.value);
+              $district.value = req?.district_id ?? "";
+            }
+          }
+
+          if (statusNorm(req) === "accepted") {
+            const csrName = req.csr_name || (req.csr_id ? `CSR #${req.csr_id}` : "-");
+            const volsText =
+              req.volunteer_names ||
+              (Array.isArray(req.volunteers) ? req.volunteers.join(", ") : "") ||
+              "-";
+            $csrName.value = csrName;
+            $volNames.textContent = volsText;
+            $csrGroup.classList.remove("hidden");
+            $volsGroup.classList.remove("hidden");
+          } else {
+            $csrGroup.classList.add("hidden");
+            $volsGroup.classList.add("hidden");
+          }
         } catch (e) {
-          console.error(e);
-          if ($hint) $hint.textContent = "Lookup failed.";
+          console.error("[loadRequest] failed:", e);
+        }
+      }
+
+      // -------- Postal lookup (enhanced: also match by names) --------
+      document.getElementById("btn-lookup").addEventListener("click", async () => {
+        try {
+          const code = ($postal?.value || "").trim();
+          if (!/^\d{6}$/.test(code)) {
+            setHint($hint, "Please enter a 6-digit postal code.");
+            return;
+          }
+          setHint($hint, "Looking up...");
+
+          let res;
+          if (window.utils?.pin?.edit?.postalLookup) {
+            res = await window.utils.pin.edit.postalLookup($postal, $region, $district, $desc, $hint);
+          } else {
+            res = await postJson("/api/address/lookup", { postal_code: code });
+          }
+
+          // 1) description/address
+          if (res?.address && $desc) $desc.value = res.address;
+
+          // 2) region
+          const regionIdFromApi = parseIntOrNull(res?.region_id);
+          const regionNameFromApi = res?.region_name;
+          // ensure region options exist before selecting
+          if (!$region?.options?.length) await fillRegions();
+          const regionSelected = setSelectByIdOrText($region, regionIdFromApi, regionNameFromApi);
+
+          // 3) districts for selected region, then select district
+          if (regionSelected && $region?.value) {
+            await fillDistricts($region.value);
+          }
+
+          const districtIdFromApi = parseIntOrNull(res?.district_id);
+          const districtNameFromApi = res?.district_name;
+          setSelectByIdOrText($district, districtIdFromApi, districtNameFromApi);
+
+          setHint($hint, "Lookup completed.");
+        } catch (e) {
+          console.error("[lookup] failed:", e);
+          setHint($hint, "Lookup failed. Please check network or token status.");
         }
       });
 
-      // Region → Districts reload
+      // -------- Region change -> reload districts --------
       $region.addEventListener("change", async () => {
-        await utils.pin.edit.reloadDistricts($region.value, $district);
+        try {
+          if (window.utils?.pin?.edit?.reloadDistricts) {
+            await window.utils.pin.edit.reloadDistricts($region.value, $district);
+          } else {
+            await fillDistricts($region.value);
+          }
+          // Clear district selection when region changes
+          if ($district) $district.value = "";
+        } catch (e) {
+          console.error("[districts] reload failed:", e);
+        }
       });
 
-      // Create/Update submit
+      // -------- Submit (create/update) --------
       document.getElementById("editRequestForm").addEventListener("submit", async (e) => {
         e.preventDefault();
         const ok = await confirmAsync(edit ? "Save changes to this request?" : "Create this request?");
         if (!ok) return;
-        await utils.pin.edit.save(edit ? parseInt(id,10) : null, {
-          $title, $category, $region, $district, $desc,
-          $start_date: document.getElementById("start_date"),
-          $start_time: document.getElementById("start_time"),
-          $end_date:   document.getElementById("end_date"),
-          $end_time:   document.getElementById("end_time"),
-        });
+
+        try {
+          if (window.utils?.pin?.edit?.save) {
+            await window.utils.pin.edit.save(edit ? parseInt(id,10) : null, {
+              $title, $category, $region, $district, $desc,
+              $start_date, $start_time, $end_date, $end_time,
+            });
+          } else {
+            const payload = collectPayload();
+            if (edit) {
+              await putJson(`/api/request/${encodeURIComponent(id)}`, payload);
+            } else {
+              await postJson(`/api/request/`, payload);
+            }
+            location.replace("/pin");
+          }
+        } catch (e2) {
+          console.error("[save] failed:", e2);
+          alert(e2?.message || "Failed to save the request.");
+        }
       });
 
-      // Confirm modal helper
-      function confirmAsync(message) {
-        return new Promise(resolve => {
-          showConfirmModal(message, () => resolve(true), () => resolve(false));
+      // -------- Delete (only edit mode) --------
+      if (edit) {
+        document.getElementById("deleteBtn").addEventListener("click", async () => {
+          const ok = await confirmAsync("Are you sure you want to delete this request?");
+          if (!ok) return;
+          try {
+            if (window.utils?.requests?.remove) {
+              await window.utils.requests.remove(Number(id));
+            } else {
+              await delJson(`/api/request/${encodeURIComponent(id)}`);
+            }
+            location.replace("/pin");
+          } catch (err) {
+            console.error(err);
+            alert(err?.message || "Failed to delete the request.");
+          }
         });
       }
-    }
+
+      // ---- Helpers (UI) ----
+      function setHint(el, text) {
+        if (!el) return;
+        el.textContent = text || "";
+      }
+
+      function collectPayload() {
+        const title = ($title?.value || "").trim();
+        const description = ($desc?.value || "").trim();
+        const category_id = $category?.value ? Number($category.value) : null;
+        const region_id   = $region?.value ? Number($region.value) : null;
+        const district_id = $district?.value ? Number($district.value) : null;
+        const start_at = ($start_date?.value && $start_time?.value) ? `${$start_date.value} ${$start_time.value}:00` : null;
+        const end_at   = ($end_date?.value && $end_time?.value) ? `${$end_date.value} ${$end_time.value}:00` : null;
+
+        return { title, description, category_id, region_id, district_id, start_at, end_at };
+      }
+
+      // ---- Helpers (HTTP) ----
+      async function getJson(url) {
+        if (window.utils?.get) return await window.utils.get(url);
+        const r = await fetch(url);
+        if (!r.ok) throw new Error(`GET ${url} ${r.status}`);
+        return await r.json();
+      }
+      async function postJson(url, body) {
+        if (window.utils?.post) return await window.utils.post(url, body);
+        const r = await fetch(url, { method:"POST", headers:{ "Content-Type":"application/json" }, body:JSON.stringify(body||{}) });
+        if (!r.ok) throw new Error(`POST ${url} ${r.status} ${(await r.text().catch(()=>''))}`);
+        return await r.json();
+      }
+      async function putJson(url, body) {
+        if (window.utils?.put) return await window.utils.put(url, body);
+        const r = await fetch(url, { method:"PUT", headers:{ "Content-Type":"application/json" }, body:JSON.stringify(body||{}) });
+        if (!r.ok) throw new Error(`PUT ${url} ${r.status} ${(await r.text().catch(()=>''))}`);
+        return await r.json();
+      }
+      async function delJson(url) {
+        if (window.utils?.del) return await window.utils.del(url);
+        const r = await fetch(url, { method:"DELETE" });
+        if (!r.ok) throw new Error(`DELETE ${url} ${r.status} ${(await r.text().catch(()=>''))}`);
+        return true;
+      }
+
+      // ---- Masters fallback (only if utils.pin.edit.loadMasters missing) ----
+      async function fillCategories() {
+        if (!$category) return;
+        const list = await getJson("/api/category");
+        $category.innerHTML = `<option value="">-- Select Category --</option>`;
+        for (const c of (list || [])) {
+          const opt = document.createElement("option");
+          opt.value = c.id;
+          opt.textContent = c.name;
+          $category.appendChild(opt);
+        }
+      }
+      async function fillRegions() {
+        if (!$region) return;
+        const list = await getJson("/api/address/regions");
+        $region.innerHTML = `<option value="">-- Select Region --</option>`;
+        for (const r of (list || [])) {
+          const opt = document.createElement("option");
+          opt.value = r.id;
+          opt.textContent = r.name;
+          $region.appendChild(opt);
+        }
+        if ($district) $district.innerHTML = `<option value="">-- Select District --</option>`;
+      }
+      async function fillDistricts(regionId) {
+        if (!$district || !regionId) {
+          if ($district) $district.innerHTML = `<option value="">-- Select District --</option>`;
+          return;
+        }
+        const list = await getJson(`/api/address/districts?region_id=${encodeURIComponent(regionId)}`);
+        $district.innerHTML = `<option value="">-- Select District --</option>`;
+        for (const d of (list || [])) {
+          const opt = document.createElement("option");
+          opt.value = d.id;
+          opt.textContent = d.name;
+          $district.appendChild(opt);
+        }
+      }
+
+      // ---- Confirm modal helper ----
+      async function confirmAsync(message) {
+        try {
+          if (window.utils?.modals?.confirm) {
+            return await window.utils.modals.confirm(message);
+          }
+        } catch (_) {}
+        return window.confirm(message);
+      }
     });
-
-    function showConfirmModal(message, onConfirm, onCancel) {
-      const modal = document.getElementById("sharedModal");
-      const msgEl = document.getElementById("modalMessage");
-      msgEl.textContent = message;
-      modal.classList.add("open");
-
-      const confirmBtn = document.getElementById("modalConfirm");
-      const cancelBtn  = document.getElementById("modalCancel");
-      const onClose = () => modal.classList.remove("open");
-
-      const cb1 = () => { onClose(); onConfirm && onConfirm(); };
-      const cb2 = () => { onClose(); onCancel && onCancel();  };
-
-      confirmBtn.onclick = cb1;
-      cancelBtn.onclick  = cb2;
-    }
   </script>
 </body>
 </html>

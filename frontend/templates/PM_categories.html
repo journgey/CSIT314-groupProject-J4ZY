@@ -7,27 +7,48 @@
   <link rel="stylesheet" href="/static/css/base.css" />
   <link rel="stylesheet" href="/static/css/layout.css" />
   <style>
-    /* Layout */
     .grid { display:grid; grid-template-columns: 1fr 1fr; gap:16px; }
     .form-inline { display:flex; gap:8px; flex-wrap:wrap; }
-    .w-200 { width:200px; }
-    .mt-2 { margin-top:.5rem; } .mt-3 { margin-top:1rem; } .mt-4 { margin-top:1.5rem; }
+    .w-200 { width:200px; } .w-320 { width:320px; }
+    .mt-2 { margin-top:.5rem; } .mt-4 { margin-top:1.5rem; }
     .btn-sm { padding:4px 8px; font-size:.9rem; }
 
-    /* Modal base */
     .modal { display:none; position:fixed; inset:0; background:rgba(0,0,0,.5);
              justify-content:center; align-items:center; z-index:999; }
     .modal.open { display:flex; }
-    .modal-card { background:#fff; color:var(--color-text,#222); border-radius:10px; padding:18px 20px; width: min(520px, 92vw); box-shadow:0 10px 28px rgba(0,0,0,.18); }
+    .modal-card { background:#fff; color:#222; border-radius:10px; padding:18px 20px; width:min(560px,92vw); box-shadow:0 10px 28px rgba(0,0,0,.18); }
     .modal-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
     .modal-title { font-size:1.1rem; font-weight:700; }
-    .modal-body { margin-top:10px; }
+    .modal-body { margin-top:10px; display:grid; gap:12px; }
     .modal-actions { display:flex; gap:10px; justify-content:flex-end; margin-top:16px; }
     .field { display:flex; flex-direction:column; gap:6px; }
     .danger { color:#a50017; }
+    .toolbar { display:flex; align-items:center; gap:10px; }
+    .muted { color: gray; }
 
-    /* Small helpers */
-    .row-name { max-width: 520px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    /* --- Table sizing fix (local overrides for #tbl) --- */
+    #tbl { table-layout: fixed; width: 100%; }
+
+    /* Reset base.css' generic nth-child widths and centering */
+    #tbl th:nth-child(n+1), #tbl td:nth-child(n+1) { width: auto; text-align: left; }
+
+    /* Narrow ID column */
+    #tbl th:nth-child(1), #tbl td:nth-child(1) { width: 10%; }
+
+    /* Keep Status / Action reasonably tight */
+    #tbl th:nth-child(2), #tbl td:nth-child(2) { width: 25%; }   /* Name */
+    #tbl th:nth-child(3), #tbl td:nth-child(3) { width: 50%; }   /* Description */
+    #tbl th:nth-child(4), #tbl td:nth-child(4) { width: 10%; }   /* Status */
+    #tbl th:nth-child(5), #tbl td:nth-child(5) { width: 5%; }   /* Action */
+
+    /* Long text should not blow up the layout */
+    #tbl td:nth-child(2),
+    #tbl td:nth-child(3) {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      overflow-wrap: anywhere;
+}
   </style>
 </head>
 <body>
@@ -46,6 +67,11 @@
     <h3>Create New</h3>
     <form id="createForm" class="form-inline" novalidate>
       <input id="newName" class="input w-200" placeholder="Category name" required />
+      <input id="newDesc" class="input w-320" placeholder="Description (optional)" />
+      <select id="newStatus" class="input w-200" title="Status">
+        <option value="active" selected>active</option>
+        <option value="inactive">inactive</option>
+      </select>
       <button class="btn btn-primary" id="createBtn" type="submit">Create</button>
     </form>
 
@@ -53,8 +79,10 @@
     <table class="table" id="tbl">
       <thead>
       <tr>
-        <th style="width:80px;">ID</th>
+        <th>ID</th>
         <th>Name</th>
+        <th>Description</th>
+        <th style="width:120px;">Status</th>
         <th style="width:220px;">Action</th>
       </tr>
       </thead>
@@ -71,10 +99,21 @@
       <button type="button" class="btn btn-outline btn-sm" data-close="edit">✕</button>
     </div>
     <div class="modal-body">
+      <input id="editId" type="hidden" />
       <div class="field">
         <label for="editName">Name</label>
         <input id="editName" class="input" />
-        <input id="editId" type="hidden" />
+      </div>
+      <div class="field">
+        <label for="editDesc">Description</label>
+        <textarea id="editDesc" class="input" rows="3" placeholder="Description"></textarea>
+      </div>
+      <div class="field">
+        <label for="editStatus">Status</label>
+        <select id="editStatus" class="input">
+          <option value="active">active</option>
+          <option value="inactive">inactive</option>
+        </select>
       </div>
     </div>
     <div class="modal-actions">
@@ -84,28 +123,8 @@
   </div>
 </div>
 
-<!-- Delete Confirm Modal -->
-<div id="deleteModal" class="modal" aria-hidden="true">
-  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="delTitle">
-    <div class="modal-header">
-      <div class="modal-title danger" id="delTitle">Delete Category</div>
-      <button type="button" class="btn btn-outline btn-sm" data-close="delete">✕</button>
-    </div>
-    <div class="modal-body">
-      <p id="delMsg">Are you sure you want to delete this category?</p>
-      <input id="delId" type="hidden" />
-    </div>
-    <div class="modal-actions">
-      <button class="btn btn-outline" data-close="delete">Cancel</button>
-      <button class="btn btn-danger" id="deleteOkBtn">Delete</button>
-    </div>
-  </div>
-</div>
-
 <script>
-/* ==============================
-   HTTP utilities (JSON + cookies)
-   ============================== */
+/* ============ HTTP helpers ============ */
 async function apiFetch(url, opts = {}) {
   const res = await fetch(url, { credentials: "include", ...opts });
   if (!res.ok) {
@@ -125,24 +144,19 @@ const http = {
   get: (u) => apiFetch(u),
   post: (u, b) => apiFetch(u, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(b ?? {}) }),
   put: (u, b) => apiFetch(u, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(b ?? {}) }),
-  del: (u) => apiFetch(u, { method: "DELETE" }),
 };
 
-/* ==============================
-   Small helpers
-   ============================== */
+/* ============ utils ============ */
 const $ = (s, r=document) => r.querySelector(s);
 function setFlash(t){ const el=$("#flash"); if(el) el.textContent=t||""; }
 function escapeHtml(s){ return String(s??"").replace(/[&<>"']/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[m])); }
 
-/* ==============================
-   Auth guard (PlatformManager)
-   ============================== */
+/* ============ auth guard (PM only) ============ */
 function normalizeRole(r){
   const x=String(r||"").trim().toLowerCase();
   if(!x) return "";
-  if(["useradmin","ua","user_admin"].includes(x)) return "UserAdmin";
   if(["platformmanager","pm","platform_manager"].includes(x)) return "PlatformManager";
+  if(["useradmin","ua","user_admin"].includes(x)) return "UserAdmin";
   if(x==="pin") return "PIN";
   if(x==="csr") return "CSR";
   return r;
@@ -157,43 +171,37 @@ async function installAuthGuard(requiredRole=null){
 }
 async function doLogout(){ try{ await http.post("/api/auth/logout",{});} finally{ location.replace("/"); }}
 
-/* ==============================
-   Categories API
-   ============================== */
+/* ============ categories API ============ */
 const categoriesApi = {
-  list: () => http.get("/api/category/").then(x=>Array.isArray(x)?x:(x?.items??[])),
+  list: (includeInactive=false) => http.get(`/api/category/?include_inactive=${includeInactive ? "true" : "false"}`)
+                                      .then(x=>Array.isArray(x)?x:(x?.items??[])),
   create: (p) => http.post("/api/category/", p),
   update: (id,p) => http.put(`/api/category/${encodeURIComponent(id)}`, p),
-  remove: (id) => http.del(`/api/category/${encodeURIComponent(id)}`),
   get: (id) => http.get(`/api/category/${encodeURIComponent(id)}`)
 };
 
-/* ==============================
-   Modal helpers
-   ============================== */
+/* ============ modal helpers ============ */
 function openModal(id){ const m=$(id); if(m){ m.classList.add("open"); m.setAttribute("aria-hidden","false"); } }
 function closeModal(id){ const m=$(id); if(m){ m.classList.remove("open"); m.setAttribute("aria-hidden","true"); } }
 
-/* ==============================
-   Rows rendering
-   ============================== */
+/* ============ rendering ============ */
 function rowHTML(c){
   const id = c.id;
   const name = escapeHtml(c.name || "");
+  const desc = escapeHtml(c.description || "");
+  const status = String(c.status || "active");
+  const actions = `<button class="btn btn-primary btn-sm" data-action="edit" data-id="${id}">Edit</button>`;
   return `
     <tr data-id="${id}">
       <td>${id}</td>
       <td class="row-name" title="${name}">${name}</td>
-      <td>
-        <button class="btn btn-primary btn-sm" data-action="edit" data-id="${id}">Edit</button>
-        <button class="btn btn-danger  btn-sm" data-action="delete" data-id="${id}">Delete</button>
-      </td>
+      <td class="row-desc" title="${desc}">${desc}</td>
+      <td>${status}</td>
+      <td>${actions}</td>
     </tr>`;
 }
 
-/* ==============================
-   Page wiring
-   ============================== */
+/* ============ page wiring ============ */
 document.addEventListener("DOMContentLoaded", async () => {
   await installAuthGuard("PlatformManager");
   $("#logoutBtn")?.addEventListener("click", doLogout);
@@ -202,12 +210,13 @@ document.addEventListener("DOMContentLoaded", async () => {
   const createForm = $("#createForm");
   const createBtn  = $("#createBtn");
   const newName    = $("#newName");
+  const newDesc    = $("#newDesc");
+  const newStatus  = $("#newStatus");
 
-  // Load list
   async function render(){
     setFlash("Loading...");
     try{
-      const items = await categoriesApi.list();
+      const items = await categoriesApi.list(true);
       tbody.innerHTML = (items||[]).map(rowHTML).join("");
       setFlash("");
     }catch(e){ console.error(e); setFlash("Failed to load categories."); }
@@ -220,76 +229,59 @@ document.addEventListener("DOMContentLoaded", async () => {
     if(!name){ setFlash("Please enter category name."); return; }
     try{
       createBtn.disabled = true; setFlash("Creating...");
-      await categoriesApi.create({ name });
-      newName.value = "";
+      await categoriesApi.create({
+        name,
+        description: (newDesc.value||"").trim() || null,
+        status: (newStatus.value||"active")
+      });
+      newName.value = ""; newDesc.value = ""; newStatus.value = "active";
       await render();
     }catch(err){ console.error(err); setFlash(err?.message||"Create failed."); }
     finally{ createBtn.disabled = false; }
   });
 
-  // Delegation: Edit/Delete
+  // Delegation: Edit / Deactivate
   tbody.addEventListener("click", async (e)=>{
     const btn = e.target.closest("button[data-action]");
     if(!btn) return;
     const id = Number(btn.getAttribute("data-id"));
     if(!Number.isInteger(id)) return;
 
-    // --- Edit flow with modal ---
     if(btn.dataset.action === "edit"){
       try{
         setFlash("");
-        const row = btn.closest("tr");
-        const currentName = row?.querySelector(".row-name")?.textContent?.trim() ?? "";
+        const data = await categoriesApi.get(id);
         $("#editId").value = String(id);
-        $("#editName").value = currentName;
+        $("#editName").value = data?.name || "";
+        $("#editDesc").value = data?.description || "";
+        $("#editStatus").value = (data?.status || "active");
         openModal("#editModal");
       }catch(err){ console.error(err); setFlash("Failed to open edit dialog."); }
       return;
     }
-
-    // --- Delete flow with confirm modal ---
-    if(btn.dataset.action === "delete"){
-      $("#delId").value = String(id);
-      $("#delMsg").textContent = `Are you sure you want to delete category #${id}? This action cannot be undone.`;
-      openModal("#deleteModal");
-      return;
-    }
   });
 
-  // Edit modal: close buttons
+  // Close buttons (both modals)
   document.body.addEventListener("click", (e)=>{
-    const closeBtn = e.target.closest("[data-close='edit']");
-    if(closeBtn) closeModal("#editModal");
-    const closeBtn2 = e.target.closest("[data-close='delete']");
-    if(closeBtn2) closeModal("#deleteModal");
+    const closeEdit = e.target.closest("[data-close='edit']");
+    if(closeEdit) closeModal("#editModal");
   });
 
-  // Edit modal: save
+  // Edit save
   $("#editSaveBtn").addEventListener("click", async ()=>{
-    const id  = Number($("#editId").value);
-    const name = ($("#editName").value || "").trim();
+    const id    = Number($("#editId").value);
+    const name  = ($("#editName").value || "").trim();
+    const desc  = ($("#editDesc").value || "").trim();
+    const status= ($("#editStatus").value || "active");
     if(!name){ setFlash("Name cannot be empty."); return; }
     try{
       $("#editSaveBtn").disabled = true; setFlash(`Saving #${id}...`);
-      await categoriesApi.update(id, { name });
+      await categoriesApi.update(id, { name, description: desc || null, status });
       closeModal("#editModal");
       await render();
       setFlash("Saved.");
     }catch(err){ console.error(err); setFlash(err?.message||"Save failed."); }
     finally{ $("#editSaveBtn").disabled = false; }
-  });
-
-  // Delete modal: confirm
-  $("#deleteOkBtn").addEventListener("click", async ()=>{
-    const id = Number($("#delId").value);
-    try{
-      $("#deleteOkBtn").disabled = true; setFlash(`Deleting #${id}...`);
-      await categoriesApi.remove(id);
-      closeModal("#deleteModal");
-      document.querySelector(`tr[data-id="${id}"]`)?.remove();
-      setFlash("Deleted.");
-    }catch(err){ console.error(err); setFlash(err?.message||"Delete failed."); }
-    finally{ $("#deleteOkBtn").disabled = false; }
   });
 
   await render();

@@ -5,6 +5,7 @@ from backend.repositories.requests_repository import RequestsRepository
 from backend.repositories.accounts_repository import AccountsRepository
 from backend.controllers.matching_controller import MatchingController
 from backend.repositories.notifications_repository import NotificationsRepository
+from backend.repositories.shortlist_repository import ShortlistRepository
 
 
 matching_bp = Blueprint("matching", __name__)  
@@ -15,6 +16,7 @@ def _service():
         requests_repo=RequestsRepository(conn),
         accounts_repo=AccountsRepository(conn),
         notifications_repo=NotificationsRepository(conn),
+        shortlist_repo = ShortlistRepository(conn),
     )
 
 @matching_bp.put("/request/<int:request_id>/accept")

@@ -1,6 +1,5 @@
 PRAGMA foreign_keys = ON;
 
-
 CREATE TABLE IF NOT EXISTS companies (
   id   INTEGER PRIMARY KEY AUTOINCREMENT, 
   name TEXT NOT NULL UNIQUE
@@ -38,7 +37,8 @@ CREATE TABLE IF NOT EXISTS volunteers (
 CREATE TABLE IF NOT EXISTS categories (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     name       TEXT NOT NULL UNIQUE,      
-    description TEXT
+    description TEXT,
+    status    TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','inactive'))
 );
 
 
@@ -67,7 +67,7 @@ CREATE TABLE IF NOT EXISTS requests (
     description         TEXT,
     start_at            TEXT,
     end_at              TEXT,
-    created_at          TEXT    NOT NULL DEFAULT (datetime('now')),
+    created_at          TEXT    NOT NULL DEFAULT (datetime('now', '+8 hours')),
     volunteers          TEXT,
     view_count          INTEGER NOT NULL DEFAULT 0,
     shortlist_count     INTEGER NOT NULL DEFAULT 0,
@@ -86,7 +86,7 @@ CREATE TABLE IF NOT EXISTS shortlist (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   csr_id     INTEGER NOT NULL,
   request_id INTEGER NOT NULL,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
   UNIQUE (csr_id, request_id),
   FOREIGN KEY (csr_id)     REFERENCES accounts(id) ON DELETE CASCADE,
   FOREIGN KEY (request_id) REFERENCES requests(id) ON DELETE CASCADE
@@ -160,9 +160,9 @@ SELECT
     )                                                   AS volunteer_names
 
 FROM requests r
-JOIN categories   cat  ON cat.id  = r.category_id
-JOIN districts    d    ON d.id    = r.district_id
-JOIN regions      rg   ON rg.id   = d.region_id
+JOIN categories   cat  ON cat.id  = r.category_id AND cat.status = 'active'
+LEFT JOIN districts    d    ON d.id    = r.district_id
+LEFT JOIN regions      rg   ON rg.id   = d.region_id
 LEFT JOIN accounts p    ON p.id    = r.pin_id
 LEFT JOIN accounts cusr ON cusr.id = r.csr_id
 LEFT JOIN v_requests_status vs ON vs.id = r.id;

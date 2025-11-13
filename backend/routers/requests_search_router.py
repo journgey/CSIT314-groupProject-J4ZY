@@ -20,9 +20,9 @@ def search_requests():
             "created_at": request.args.get("created_at", type=str),
             "start_at": request.args.get("start_at", type=str),
             "end_at": request.args.get("end_at", type=str),
-            "status": request.args.get("status", type=str),            # ← 추가 (CSV 가능)
-            "pin_id": request.args.get("pin_id", type=int),            # ← 선택: 특정 핀만
-            "csr_id": request.args.get("csr_id", type=int),            # ← 선택: 특정 CSR만
+            "status": request.args.get("status", type=str),            
+            "pin_id": request.args.get("pin_id", type=int),            
+            "csr_id": request.args.get("csr_id", type=int),            
             "limit": request.args.get("limit", default=20, type=int),
             "offset": request.args.get("offset", default=0, type=int),
             "sort": request.args.get("sort", default="created_at", type=str),

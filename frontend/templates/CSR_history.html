@@ -11,6 +11,16 @@
     tr:hover { background-color: #f8f8f8; cursor: pointer; }
     .muted { color:#666; }
     .period { line-height:1.4; white-space:nowrap; }
+
+    /* Filter bar */
+    .filter-bar { display:flex; align-items:center; flex-wrap:wrap; gap:10px; margin:16px 0; }
+    .filter-bar label { font-weight:500; }
+    .filter-bar select, .filter-bar input[type="date"] {
+      padding:6px; border:1px solid var(--color-border,#ccc); border-radius:6px; font-size:0.95rem;
+    }
+    .filter-bar .date-range { display:inline-flex; align-items:center; gap:6px; }
+    .filter-bar .btn { padding:6px 12px; font-size:0.9rem; }
+    .btn-muted { background:#e9ecef; color:#333; border:1px solid var(--color-border,#d0d7de); }
   </style>
 </head>
 <body>
@@ -21,6 +31,30 @@
         <button class="btn btn-outline" onclick="window.location.href='/csr'">← Back to Dashboard</button>
       </div>
     </div>
+
+    <!-- Filter Bar -->
+    <section class="content card">
+      <div class="filter-bar">
+        <label for="regionFilter">Region:</label>
+        <select id="regionFilter"><option value="">All</option></select>
+
+        <label for="districtFilter">District:</label>
+        <select id="districtFilter"><option value="">All</option></select>
+
+        <label for="categoryFilter">Category:</label>
+        <select id="categoryFilter"><option value="">All</option></select>
+
+        <label>Date Created:</label>
+        <div class="date-range">
+          <input type="date" id="startDateFilter" />
+          <span>to</span>
+          <input type="date" id="endDateFilter" />
+        </div>
+
+        <button class="btn btn-sm btn-primary" id="applyFilters">Filter</button>
+        <button class="btn btn-sm btn-outline" id="resetFilters">Reset</button>
+      </div>
+    </section>
 
     <section class="content card">
       <h3>History</h3>
@@ -85,10 +119,49 @@
       return `<span class="period">${esc(txt)}</span>`;
     }
 
+    // ---- Standalone Data Loaders (region/district/category) ----
+    async function loadRegionsMap() {
+      const arr = await GET("/api/address/regions");
+      const map = {}; (arr || []).forEach(x => map[x.id] = x.name);
+      return map;
+    }
+    async function loadDistrictsData() {
+      const rows = await GET("/api/address/districts"); // [{id,name,region_id}, ...]
+      const map = {}; const byRegion = {};
+      (rows || []).forEach(d => {
+        map[d.id] = d.name;
+        const rid = String(d.region_id ?? "");
+        (byRegion[rid] ||= []).push(d);
+      });
+      return { map, byRegion, rows };
+    }
+    async function loadCategoriesMap() {
+      const res = await GET("/api/category/");
+      const arr = Array.isArray(res) ? res : (res?.items ?? []);
+      const map = {}; (arr || []).forEach(x => map[x.id] = x.name);
+      return map;
+    }
+
+    function inCreatedRange(r, fromISO, toISO){
+      const x = (r.created_at||"").slice(0,10); // YYYY-MM-DD
+      if (fromISO && (!x || x < fromISO)) return false;
+      if (toISO   && (!x || x > toISO))   return false;
+      return true;
+    }
+
     // --------------- Main logic ---------------
     document.addEventListener("DOMContentLoaded", async () => {
       const tbody = document.querySelector("#historyTable tbody");
       const flash = document.getElementById("flash");
+
+      const $ = (id)=>document.getElementById(id);
+      const $regionFilter   = $("regionFilter");
+      const $districtFilter = $("districtFilter");
+      const $categoryFilter = $("categoryFilter");
+      const $startDate      = $("startDateFilter");
+      const $endDate        = $("endDateFilter");
+      const $btnApply       = $("applyFilters");
+      const $btnReset       = $("resetFilters");
 
       try {
         flash.textContent = "Loading...";
@@ -99,77 +172,143 @@
         if (role !== "csr") { window.location.href = "/"; return; }
 
         // Load lookups
-        const [regionsArr, categoriesRes] = await Promise.all([
-          GET("/api/address/regions"),
-          GET("/api/category/")
+        const [regionsMap, districtsData, categoriesMap] = await Promise.all([
+          loadRegionsMap(),
+          loadDistrictsData(),
+          loadCategoriesMap()
         ]);
-        const regionsMap = {};
-        (regionsArr || []).forEach(x => { regionsMap[x.id] = x.name; });
-        const catsArr = Array.isArray(categoriesRes) ? categoriesRes : (categoriesRes?.items ?? []);
-        const categoriesMap = {};
-        (catsArr || []).forEach(x => { categoriesMap[x.id] = x.name; });
+        const { map: districtsMap, rows: districtsRows } = districtsData;
 
-        // District lookup (optional)
-        let districtsMap = {};
-        try {
-          const allDists = await GET("/api/address/districts");
-          (allDists || []).forEach(x => { districtsMap[x.id] = x.name; });
-        } catch {}
+        // Fill selects
+        function fill(sel, map){
+          Object.entries(map).forEach(([id,name])=>{
+            const opt=document.createElement("option");
+            opt.value=id; opt.textContent=name; sel.appendChild(opt);
+          });
+        }
+        fill($regionFilter, regionsMap);
+        fill($districtFilter, districtsMap);
+        fill($categoryFilter, categoriesMap);
 
-        // Fetch CSR requests
+        // Fetch CSR requests (completed or expired only)
         const res = await GET(`/api/request?csr_id=${encodeURIComponent(me.id)}`);
         const all = Array.isArray(res) ? res : (res?.items ?? []);
-        const history = all.filter(r => {
+        let base = all.filter(r => {
           const s = normalizeStatus(r);
           return isCompleted(s) || isExpired(s);
         });
 
-        // Sort by end_at or created_at (desc)
-        history.sort((a,b)=>{
+        // Sort by end_at/created_at desc
+        base.sort((a,b)=>{
           const A = (a.end_at || a.created_at || "");
           const B = (b.end_at || b.created_at || "");
           return (B > A) ? 1 : (B < A) ? -1 : 0;
         });
 
-        if (!history.length) {
-          tbody.innerHTML = `<tr><td colspan="6" class="muted" style="text-align:center; padding:12px;">No history found.</td></tr>`;
-          flash.textContent = "";
-          return;
+        // --- Rebuild district options by fetching from server (with fallback) ---
+        /** Rebuild district select using /api/address/districts?region_id=... */
+        async function rebuildDistrictOptions(selectedRegionId) {
+          let list = [];
+          try {
+            const qs = selectedRegionId ? `?region_id=${encodeURIComponent(selectedRegionId)}` : "";
+            list = await GET(`/api/address/districts${qs}`);
+            if (!Array.isArray(list)) list = [];
+          } catch (e) {
+            // Fallback to preloaded in-memory lists when server call fails
+            list = selectedRegionId
+              ? (districtsData.byRegion[String(selectedRegionId)] || [])
+              : (districtsRows || []);
+          }
+
+          // Rebuild <select>
+          $districtFilter.innerHTML = `<option value="">All</option>`;
+          list.forEach(d => {
+            const opt = document.createElement("option");
+            opt.value = d.id;
+            opt.textContent = d.name;
+            $districtFilter.appendChild(opt);
+          });
+
+          // Reset current selection if it is no longer valid
+          const stillValid = list.some(d => String(d.id) === String($districtFilter.value));
+          if ($districtFilter.value && !stillValid) $districtFilter.value = "";
         }
 
-        // Render rows
-        tbody.innerHTML = history.map(r => {
-          const id = r.id ?? "";
-          const title = (r.title && String(r.title).trim()) ? r.title : "(no title)";
-          const cat   = r.category_name ?? categoriesMap[r.category_id] ?? "-";
-          const reg   = r.region_name   ?? regionsMap[r.region_id] ?? "-";
-          const dist  = r.district_name ?? districtsMap[r.district_id] ?? "-";
+        // Initial district options (server-first)
+        await rebuildDistrictOptions($regionFilter.value);
 
-          // Determine feedback state
-          const hasFeedback = (r.feedback_rating != null) || (r.feedback_comment && String(r.feedback_comment).trim() !== "");
-          const fbText = hasFeedback ? "Given" : "Pending";
-
-          return `
-            <tr data-id="${id}">
-              <td>${esc(title)}</td>
-              <td>${esc(cat)}</td>
-              <td>${esc(reg)}</td>
-              <td>${esc(dist)}</td>
-              <td>${periodHTML(r)}</td>
-              <td>${fbText}</td>
-            </tr>
-          `;
-        }).join("");
-
-        // Row click → CSR view page
-        tbody.querySelectorAll("tr[data-id]").forEach(tr => {
-          tr.addEventListener("click", () => {
-            const id = tr.getAttribute("data-id");
-            if (id) window.location.href = `/csr/view_request?id=${encodeURIComponent(id)}`;
-          });
+        // Region change → refetch districts for that region
+        $regionFilter.addEventListener("change", async () => {
+          await rebuildDistrictOptions($regionFilter.value);
         });
 
+        function render(rows) {
+          if (!rows.length) {
+            tbody.innerHTML = `<tr><td colspan="6" class="muted" style="text-align:center; padding:12px;">No history found.</td></tr>`;
+            return;
+          }
+          tbody.innerHTML = rows.map(r => {
+            const id = r.id ?? "";
+            const title = (r.title && String(r.title).trim()) ? r.title : "(no title)";
+            const cat   = r.category_name ?? categoriesMap[r.category_id] ?? "-";
+            const reg   = r.region_name   ?? regionsMap[r.region_id] ?? "-";
+            const dist  = r.district_name ?? districtsMap[r.district_id] ?? "-";
+            const fbOn  = (r.feedback_rating != null) || (r.feedback_comment && String(r.feedback_comment).trim() !== "");
+            const fbTxt = fbOn ? "Given" : "Pending";
+            return `
+              <tr data-id="${id}">
+                <td>${esc(title)}</td>
+                <td>${esc(cat)}</td>
+                <td>${esc(reg)}</td>
+                <td>${esc(dist)}</td>
+                <td>${periodHTML(r)}</td>
+                <td>${fbTxt}</td>
+              </tr>
+            `;
+          }).join("");
+
+          tbody.querySelectorAll("tr[data-id]").forEach(tr => {
+            tr.addEventListener("click", () => {
+              const id = tr.getAttribute("data-id");
+              if (id) window.location.href = `/csr/view_request?id=${encodeURIComponent(id)}`;
+            });
+          });
+        }
+
+        function applyFilters() {
+          const rid = $regionFilter.value, did=$districtFilter.value, cid=$categoryFilter.value;
+          const from=$startDate.value, to=$endDate.value;
+
+          const filtered = base.filter(r => {
+            if (rid && String(r.region_id)!==String(rid)) return false;
+            if (did && String(r.district_id)!==String(did)) return false;
+            if (cid && String(r.category_id)!==String(cid)) return false;
+            if (!inCreatedRange(r, from, to)) return false;
+            return true;
+          }).sort((a,b)=>{
+            const A=(a.created_at || a.end_at || "");
+            const B=(b.created_at || b.end_at || "");
+            return (B>A)?1:(B<A)?-1:0;
+          });
+
+          render(filtered);
+          flash.textContent = filtered.length ? "" : "No requests found for the selected filters.";
+        }
+
+        document.getElementById("applyFilters").addEventListener("click", applyFilters);
+        document.getElementById("resetFilters").addEventListener("click", async ()=>{
+          $regionFilter.value="";
+          await rebuildDistrictOptions("");
+          $districtFilter.value="";
+          $categoryFilter.value="";
+          $startDate.value="";
+          $endDate.value="";
+          applyFilters();
+        });
+
+        // Initial paint
         flash.textContent = "";
+        render(base);
       } catch (e) {
         console.error(e);
         flash.textContent = "Failed to load history.";

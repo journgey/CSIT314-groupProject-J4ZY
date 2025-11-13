@@ -9,11 +9,10 @@ class FeedbackController:
     def _to_utc_naive(s: str | None) -> datetime | None:
         if not s:
             return None
-        iso = s.replace("T", " ")
+        iso = s.replace("T", " ").replace("Z", "+00:00")
         dt = datetime.fromisoformat(iso)
-        if dt.tzinfo is not None:  # aware => UTC로 맞추고 tzinfo 제거
+        if dt.tzinfo is not None:  
             dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
-        # tzinfo가 None이면 DB가 UTC naive로 저장되어 있다고 가정
         return dt    
 
     def create_feedback(self, *, request_id: int, pin_id: int, rating: int, comment: str) -> Dict[str, Any]:

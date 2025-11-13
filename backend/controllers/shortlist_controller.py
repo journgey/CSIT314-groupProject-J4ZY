@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 class ShortlistController:
     def __init__(self, shortlist_repo, accounts_repo=None, requests_repo=None):
@@ -46,3 +46,7 @@ class ShortlistController:
         if not ok:
             raise ValueError("Shortlist pair not found")
         return {"deleted": True, "csr_id": csr_id, "request_id": request_id}
+    
+    def get_pin_shortlist_count(self, pin_id: int) -> dict:
+        total = self.shortlist_repo.get_pin_shortlist_count(pin_id)
+        return {"shortlisted_total": total}

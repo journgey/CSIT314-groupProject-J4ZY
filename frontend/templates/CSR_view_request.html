@@ -62,6 +62,12 @@
           <span class="chip">Shortlisted: <span id="shortlistCount" class="num">0</span></span>
         </div>
 
+        <div id="feedbackSection" class="content"
+            style="margin-top:16px; border-top:1px solid var(--color-border); padding-top:12px; display:none;">
+          <h4>Feedback</h4>
+          <div id="feedbackContent" class="readonly-field" style="display:block; width:100%;"></div>
+        </div>
+
         <!-- This whole action block will be hidden when status === 'completed' -->
         <div class="form-actions" id="actionsBlock">
           <div class="grow"><small id="hint" class="muted"></small></div>
@@ -215,6 +221,27 @@ document.addEventListener("DOMContentLoaded", async () => {
   $viewsChip.textContent  = (typeof r.view_count === "number") ? r.view_count : (r.views ?? 0);
   $shortChip.textContent  = (typeof r.shortlist_count === "number") ? r.shortlist_count :
                             (typeof r.shortlisted_count === "number") ? r.shortlisted_count : 0;
+
+  // ----- Feedback (completed + given) -----
+  (function showFeedbackIfCompleted() {
+    const st = String(r.computed_status || r.status || "").trim().toLowerCase();
+    const hasFeedback =
+      (r.feedback_rating != null) ||
+      (r.feedback_comment && String(r.feedback_comment).trim() !== "");
+
+    if (st === "completed" && hasFeedback) {
+      const rating  = (r.feedback_rating != null) ? `${r.feedback_rating}/5` : "–";
+      const comment = r.feedback_comment ? escapeHtml(r.feedback_comment) : "No comment";
+
+      document.getElementById("feedbackContent").innerHTML =
+        `<div><strong>Rating:</strong> ${rating}</div>
+        <div style="margin-top:6px;"><strong>Comment:</strong><br>${comment}</div>`;
+
+      document.getElementById("feedbackSection").style.display = "block";
+    } else {
+      document.getElementById("feedbackSection").style.display = "none";
+    }
+  })();                      
 
   // Toggle UI by status
   const st = String(r.computed_status || r.status || "").toLowerCase();

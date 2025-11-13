@@ -77,7 +77,6 @@ const http = {
 };
 const $ = (s,r=document)=>r.querySelector(s);
 
-// FIX: '>' 매핑 누락 보완
 function escapeHtml(s){
   return String(s??"").replace(/[&<>"']/g, m=>({
     "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
@@ -103,17 +102,13 @@ async function installAuthGuard(reqRole=null){
   }catch{ location.replace("/"); }
 }
 
-/* ============= Address line builder (utils 스타일, 확장형) ============= */
-/* 변경점: 다양한 키 대응 + 폴백(Region/District/Postal) + 강건한 join */
 function buildAddressLine(r){
-  // 1) 완성형 후보
   const complete = [
     r.address_text, r.full_address, r.address, r.addr, r.address_line, r.address1, r.address2,
     r.addr_line, r.addr1
   ].find(v => typeof v === "string" && v.trim());
   if (complete) return complete.trim();
 
-  // 2) 파츠 조합 (가능한 많은 별칭 대응)
   const street = r.street_name || r.street || r.road_name || r.road || r.street1;
   const unit   = r.unit || r.unit_no || r.unit_number || r.apartment || r.flat;
   const parts = [
@@ -121,7 +116,6 @@ function buildAddressLine(r){
   ].filter(v => typeof v === "string" && v.trim());
   const partsJoined = parts.join(" ").replace(/\s+/g," ").trim();
 
-  // 3) 지역/구/우편(여러 키 대응) 폴백
   const region   = r.region_name || r.region || r.region_title || r.regionName || "";
   const district = r.district_name || r.district || r.district_title || r.districtName || "";
   const postal   = r.postal_code || r.postal || r.zipcode || r.zip || r.postcode || "";
@@ -129,11 +123,9 @@ function buildAddressLine(r){
   const rd = [region, district].filter(Boolean).join(" · ");
   const fallback = postal ? `${rd}${rd ? " " : ""}(${postal})` : rd;
 
-  // 우선순위: partsJoined → fallback → ""
   return partsJoined || fallback || "";
 }
 
-// 날짜 표시
 function ddmmyyyy_hhmm(iso){
   if(!iso) return "";
   const s = String(iso).replace("T"," ").trim();
@@ -167,17 +159,15 @@ document.addEventListener("DOMContentLoaded", async () => {
   $("#region").innerHTML   = (regs||[]).map(r=>`<option value="${r.id}">${escapeHtml(r.name)}</option>`).join("");
 
   const r = await reqApi.get(id);
-  window.r = r; // 콘솔 확인용
+  window.r = r; 
   if(!r){ alert("Request not found"); return location.replace("/pin"); }
 
-  // 기본 필드
   $("#title").value = r.title || "";
   $("#category").value = r.category_id ?? "";
   $("#region").value   = r.region_id ?? "";
   $("#status").textContent = r.computed_status || r.status || "";
   $("#date").textContent   = periodText(r);
 
-  // ====== Description에 상세주소 자동 주입 (중복 방지) ======
   (function(){
     const addr = buildAddressLine(r);
     let desc = typeof r.description === "string" ? r.description : "";
@@ -188,7 +178,6 @@ document.addEventListener("DOMContentLoaded", async () => {
     $("#desc").value = desc || "No description provided.";
   })();
 
-  // Back 버튼
   const statusLower = String(r.computed_status || r.status || "").trim().toLowerCase();
   const backBtn = document.getElementById("backBtn");
   if (["completed","expired"].includes(statusLower)) {
@@ -202,7 +191,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     backBtn.href = "/pin";
   }
 
-  // District 목록
+  // District 
   try{
     const dists = await geoApi.districts(r.region_id);
     $("#district").innerHTML = (dists||[]).map(d=>`<option value="${d.id}">${escapeHtml(d.name)}</option>`).join("");
@@ -228,7 +217,6 @@ document.addEventListener("DOMContentLoaded", async () => {
     $("#feedbackSection").style.display = "block";
   }
 
-  // 카운터
   $("#viewsCount").textContent =
     (typeof r.view_count === "number") ? r.view_count : (r.views ?? 0);
   $("#shortlistCount").textContent =

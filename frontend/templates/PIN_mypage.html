@@ -112,10 +112,16 @@ function withPending(btn, fn){ return async(...a)=>{ const b=btn?.textContent; b
 document.addEventListener('DOMContentLoaded', async () => {
   try{
     const me = await guardPIN();
-    const [reqRes, catRes, notiRes] = await Promise.all([
+
+    const shortlistStatsP = http
+      .get(`/api/shortlists/stats?pin_id=${encodeURIComponent(me.id)}`)
+      .catch(() => null);
+
+    const [reqRes, catRes, notiRes, shortlistStats] = await Promise.all([
       http.get(`/api/request?pin_id=${encodeURIComponent(me.id)}`),
       http.get('/api/category/'),
       http.get('/api/notification').catch(()=>[]),
+      shortlistStatsP,
     ]);
 
     const rows = Array.isArray(reqRes)?reqRes:(reqRes?.items??[]);
@@ -126,10 +132,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     const s = countByStatus(rows);
     document.getElementById('totalCount').textContent=s.total;
     document.getElementById('pendingCount').textContent=s.pending;
-    document.getElementById('shortlistedCount').textContent=s.shortlisted;
     document.getElementById('acceptedCount').textContent=s.accepted;
     document.getElementById('completedCount').textContent=s.completed;
     document.getElementById('expiredCount').textContent=s.expired;
+
+    const shortlistTotal = (shortlistStats && Number(shortlistStats.shortlisted_total)) ?? rows.reduce((acc, r) => acc + Number(r.shortlist_count || 0), 0);
+    document.getElementById('shortlistedCount').textContent = shortlistTotal;
 
     const ul=document.getElementById('notificationsList'); ul.innerHTML='';
     (notis||[]).forEach(n=>{ const li=document.createElement('li'); li.textContent=(n.message||n.text||'Notification')+(n.created_at?` (${n.created_at})`: ''); ul.appendChild(li); });
@@ -143,8 +151,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         const cat=catMap[r.category_id]||r.category_name||'-';
         const s=normStatus(r);
         const date=periodInline(r);
-        const sl=(r.shortlist_count ?? r.shortlisted_count ?? r.times_shortlisted ?? 0);
-        const vv=(r.view_count ?? r.views ?? 0);
+        const sl=(r.shortlist_count ?? 0);
+        const vv=(r.view_count ?? 0);
         return `
           <tr>
             <td><a href="/pin/view_request?id=${encodeURIComponent(id)}">${escapeHtml(title)}</a></td>

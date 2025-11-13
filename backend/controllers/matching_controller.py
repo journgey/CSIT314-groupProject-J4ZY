@@ -2,13 +2,15 @@ from typing import List, Dict, Any, Optional
 import json
 from backend.repositories.requests_repository import RequestsRepository
 from backend.repositories.accounts_repository import AccountsRepository
+from backend.repositories.shortlist_repository import ShortlistRepository
 from backend.repositories.notifications_repository import NOTIF_MATCH_ASSIGNED, NotificationsRepository
 
 class MatchingController:
-    def __init__(self, requests_repo: RequestsRepository, accounts_repo: AccountsRepository, notifications_repo: NotificationsRepository):
+    def __init__(self, requests_repo: RequestsRepository, accounts_repo: AccountsRepository, notifications_repo: NotificationsRepository, shortlist_repo: Optional[ShortlistRepository] = None):
         self.requests_repo = requests_repo
         self.accounts_repo = accounts_repo
         self.notifications_repo = notifications_repo
+        self.shortlist_repo = shortlist_repo
 
     @staticmethod
     def _normalize_volunteers(raw) -> List[Any]:
@@ -55,6 +57,10 @@ class MatchingController:
             message=f"Your request '{req['title']}' has been accepted by {csr_name or f'CSR #{csr_id}'}."
         )
 
-        # 6) Return updated request
+        # 6) Removed from all shortlists
+        if self.shortlist_repo is not None:
+            self.shortlist_repo.clear_for_request(request_id)
+
+        # 7) Return updated request
         out = self.requests_repo.get_request_by_id(request_id)
         return out, 200

@@ -173,3 +173,31 @@ class ShortlistRepository:
 
         self.conn.commit()
         return deleted
+    
+    def get_pin_shortlist_count(self, pin_id: int) -> int:
+        cur = self.conn.cursor()
+        cur.execute("""
+            SELECT COUNT(*) 
+            FROM shortlist s
+            JOIN requests r ON r.id = s.request_id
+            WHERE r.pin_id = ?
+        """, (pin_id,))
+        (count,) = cur.fetchone()
+        return count
+
+    def clear_for_request(self, request_id: int) -> int:
+        """Remove all shortlist rows for a request and reset its counter to 0."""
+        cur = self.conn.cursor()
+
+        # Delete all shortlist rows for this request
+        cur.execute("DELETE FROM shortlist WHERE request_id = ?", (request_id,))
+        deleted = cur.rowcount
+
+        # Reset denormalised counter on the parent request
+        cur.execute(
+            "UPDATE requests SET shortlist_count = 0 WHERE id = ?",
+            (request_id,),
+        )
+
+        self.conn.commit()
+        return deleted

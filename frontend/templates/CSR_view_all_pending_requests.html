@@ -187,24 +187,28 @@
       });
     }
 
-    function rebuildDistrictOptions(baseRows, selectedRegionId, districtsMap, $districtFilter) {
-      const keep = new Set();
-      baseRows.forEach(r => {
-        if (!selectedRegionId || String(r.region_id) === String(selectedRegionId)) {
-          if (r.district_id != null) keep.add(String(r.district_id));
-        }
-      });
-      $districtFilter.innerHTML = `<option value="">All</option>`;
-      Object.entries(districtsMap).forEach(([id, name]) => {
-        if (!selectedRegionId || keep.has(String(id))) {
-          const opt = document.createElement("option");
-          opt.value = id; opt.textContent = name;
-          $districtFilter.appendChild(opt);
-        }
-      });
-      if ($districtFilter.value && !keep.has(String($districtFilter.value))) {
-        $districtFilter.value = "";
+    // --- server-first district rebuild (uses /api/address/districts?region_id=...) ---
+    async function rebuildDistrictOptionsServer(selectedRegionId, $districtFilter) {
+      let list = [];
+      try {
+        const qs = selectedRegionId ? `?region_id=${encodeURIComponent(selectedRegionId)}` : "";
+        list = await GET(`/api/address/districts${qs}`);
+        if (!Array.isArray(list)) list = [];
+      } catch {
+        // if server fails, fall back to all districts (no region filter)
+        list = await GET("/api/address/districts") || [];
       }
+
+      $districtFilter.innerHTML = `<option value="">All</option>`;
+      list.forEach(d => {
+        const opt = document.createElement("option");
+        opt.value = d.id; opt.textContent = d.name;
+        $districtFilter.appendChild(opt);
+      });
+
+      // reset if current selection is invalid under new list
+      const stillValid = list.some(d => String(d.id) === String($districtFilter.value));
+      if ($districtFilter.value && !stillValid) $districtFilter.value = "";
     }
 
     function applyClientFilters(base, maps, els) {
@@ -276,8 +280,11 @@
 
         let base = await fetchPendingViaSearch({ limit: 200, sort: "created_at", order: "desc" });
 
-        $regionFilter.addEventListener("change", () => {
-          rebuildDistrictOptions(base, $regionFilter.value, districtsMap, $districtFilter);
+        // initial district build (server-first, based on current region selection)
+        await rebuildDistrictOptionsServer($regionFilter.value, $districtFilter);
+
+        $regionFilter.addEventListener("change", async () => {
+          await rebuildDistrictOptionsServer($regionFilter.value, $districtFilter);
           $districtFilter.value = "";
         });
 
@@ -296,7 +303,7 @@
 
         $btnReset.addEventListener("click", async () => {
           $regionFilter.value = "";
-          rebuildDistrictOptions(base, "", districtsMap, $districtFilter);
+          await rebuildDistrictOptionsServer("", $districtFilter);
           $districtFilter.value = "";
           $categoryFilter.value = "";
           $startDate.value = "";
@@ -308,7 +315,7 @@
           });
         });
 
-        rebuildDistrictOptions(base, $regionFilter.value, districtsMap, $districtFilter);
+        // initial paint
         applyClientFilters(base, { categoriesMap, regionsMap, districtsMap }, {
           $regionFilter, $districtFilter, $categoryFilter, $startDate, $endDate, $keyword, $flash
         });

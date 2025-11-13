@@ -33,7 +33,8 @@ def get_category(category_id: int):
 @login_required
 def list_categories():
     service = _service()
-    items = service.list_categories()
+    include_inactive = request.args.get("include_inactive") == "true"
+    items = service.list_categories(include_inactive)
     return jsonify(items), 200
 
 @categories_bp.put("/<int:category_id>")
@@ -50,9 +51,10 @@ def update_category(category_id: int):
 @categories_bp.delete("/<int:category_id>")
 @login_required
 @require_role("PlatformManager")
-def delete_category(category_id: int):
+def deactivate_category(category_id: int):
+    """Deactivate instead of hard delete"""
     service = _service()
-    ok = service.delete_category(category_id, acting_role=g.current_user.get("role"))
+    ok = service.deactivate_category(category_id, acting_role=g.current_user.get("role"))
     if not ok:
         return jsonify({"error": "Category not found"}), 404
-    return jsonify({"message": "Category deleted"}), 200
+    return jsonify({"message": "Category deactivated"}), 200

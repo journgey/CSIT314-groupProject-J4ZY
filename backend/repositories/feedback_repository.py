@@ -21,7 +21,6 @@ class FeedbackRepository:
             raise ValueError("Request not found")
         self.conn.commit()
 
-        # 방금 저장된 값을 다시 읽어 반환 (end_at 포함)
         cur.execute(
             """
             SELECT id, pin_id, csr_id, title, start_at, end_at,
@@ -41,11 +40,10 @@ class FeedbackRepository:
             """
             SELECT
                 r.id, r.pin_id, r.csr_id,
-                r.category_id, r.district_id,  -- 필요 시 region_id도 포함
+                r.category_id, r.district_id, 
                 r.title, r.description,
                 r.start_at, r.end_at, r.created_at,
                 r.view_count,
-                -- ★ 피드백 3종 포함
                 r.feedback_rating, r.feedback_comment, r.feedback_created_at
             FROM requests r
             WHERE r.pin_id = ?
@@ -57,7 +55,6 @@ class FeedbackRepository:
         cols = [c[0] for c in cur.description]
         return [dict(zip(cols, r)) for r in rows]
 
-    # (B) 단건 조회
     def get_request_by_id(self, req_id: int):
         cur = self.conn.cursor()
         cur.execute(
@@ -68,7 +65,6 @@ class FeedbackRepository:
                 r.title, r.description,
                 r.start_at, r.end_at, r.created_at,
                 r.view_count,
-                -- ★ 피드백 3종 포함
                 r.feedback_rating, r.feedback_comment, r.feedback_created_at
             FROM requests r
             WHERE r.id = ?
@@ -82,7 +78,6 @@ class FeedbackRepository:
 
     def get_feedback_for_request(self, request_id: int) -> Optional[Dict[str, Any]]:
         cur = self.conn.cursor()
-        # 댓글이 비어있더라도 별점이 있으면 피드백이 존재하는 것으로 처리
         cur.execute(
             """
             SELECT id, pin_id, csr_id, title,
@@ -101,7 +96,6 @@ class FeedbackRepository:
 
     def list_feedback_for_csr(self, csr_id: int) -> List[Dict[str, Any]]:
         cur = self.conn.cursor()
-        # CSR 관점 목록에서도 rating/ comment 둘 중 하나만 있어도 노출
         cur.execute(
             """
             SELECT id, pin_id, csr_id, title,
@@ -119,7 +113,6 @@ class FeedbackRepository:
 
     def get_request_min(self, request_id: int) -> Optional[Dict[str, Any]]:
         cur = self.conn.cursor()
-        # 컨트롤러에서 종료 여부 판단에 사용할 end_at 포함
         cur.execute(
             """
             SELECT id, pin_id, csr_id, start_at, end_at,

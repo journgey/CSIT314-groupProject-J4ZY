@@ -157,12 +157,6 @@
       }));
     }
 
-    async function loadAcceptedRows(csrId) {
-      const res = await GET(`/api/request?csr_id=${encodeURIComponent(csrId)}`);
-      const arr = Array.isArray(res) ? res : (res?.items ?? []);
-      return arr.filter(r => statusNorm(r) === "accepted");
-    }
-
     // ================== Renderers ==================
     function renderShortlisted(tbody, rows) {
       tbody.innerHTML = "";
@@ -191,6 +185,11 @@
         });
         tbody.appendChild(tr);
       });
+    }
+
+    async function loadAssignedRows(csrId) {
+      const res = await GET(`/api/request?csr_id=${encodeURIComponent(csrId)}`);
+      return Array.isArray(res) ? res : (res?.items ?? []);
     }
 
     function renderAccepted(tbody, rows) {
@@ -261,16 +260,14 @@
         const me = await guardCSR();
         if (!me) return;
 
-        // 1) 알림 조회 (백엔드에서 csr_id 필터가 된다면 쿼리스트링 붙이기 권장)
         let notiRes = [];
         try {
           notiRes = await GET(`/api/notification?csr_id=${encodeURIComponent(me.id)}`);
         } catch {
-          notiRes = []; // 실패 시 빈 배열
+          notiRes = []; 
         }
         const notis = Array.isArray(notiRes) ? notiRes : (notiRes?.items ?? []);
 
-        // 2) 렌더링
         const ul = document.getElementById('notificationsList');
         ul.innerHTML = '';
         if (!notis.length) {
@@ -286,22 +283,24 @@
           });
         }
 
-        // 3) 나머지 데이터 로드
         const shortlistedTbody = document.querySelector("#shortlistedTable tbody");
         const acceptedTbody    = document.querySelector("#acceptedTable tbody");
 
         async function reloadAll() {
-          const [shortlistedRows, acceptedRows] = await Promise.all([
+          const [shortlistedRows, assignedRows] = await Promise.all([
             loadShortlistedRows(me.id),
-            loadAcceptedRows(me.id),
+            loadAssignedRows(me.id), 
           ]);
+
+          const acceptedRows  = assignedRows.filter(r => statusNorm(r) === "accepted");
+          const completedRows = assignedRows.filter(r => statusNorm(r) === "completed");
+
           document.getElementById("shortlistedCount").textContent = shortlistedRows.length;
           document.getElementById("acceptedCount").textContent    = acceptedRows.length;
-          const completedCount = acceptedRows.filter(r => statusNorm(r) === "completed").length;
-          document.getElementById("completedCount").textContent   = completedCount;
+          document.getElementById("completedCount").textContent   = completedRows.length;
 
           renderShortlisted(shortlistedTbody, shortlistedRows);
-          renderAccepted(acceptedTbody, acceptedRows);
+          renderAccepted(acceptedTbody, acceptedRows); 
         }
 
         await reloadAll();
