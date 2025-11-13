@@ -88,7 +88,7 @@ def create_app():
     # 5) Register blueprints (blueprints must not set their own url_prefix)
     from backend.routers import (
     auth_router, accounts_router, categories_router, requests_router,
-    engagement_router, feedback_router, notifications_router,
+    feedback_router, notifications_router,
     reports_router, shortlist_router, matching_router,
     requests_search_router, address_router, volunteers_router
     )
@@ -98,7 +98,6 @@ def create_app():
         (accounts_router.accounts_bp, "/api/account"),
         (categories_router.categories_bp, "/api/category"),
         (requests_router.requests_bp, "/api/request"),
-        (engagement_router.engagements_bp, "/api/engagement"),
         (feedback_router.feedback_bp, "/api/feedback"),
         (notifications_router.notifications_bp, "/api/notification"),
         (reports_router.reports_bp, "/api/report"),
